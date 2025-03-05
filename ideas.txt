@@ -1,0 +1,39 @@
+rekurencyjna sieć neuronowa:
+- na wejściu:
+	 2 neurony odpowiedzialne za to czy pamiętasz, czy nie (lub jeden 0/1)
+ 	 czas albo od początku do powtórki, albo od poprzedniej powtórki, zlogarytmizowany
+	 czas po którym chcesz recall
+- na wyjściu:
+	 prawdopodobieństwo poprawnego recall po tym czasie
+
+w momencie gdy prawdopodobieństwo poniżej 0.9 - robimy powtórkę
+
+zabezpieczenia:
+- pierwsza powtórka nie może być później niż dzień po
+- kolejne powtórki nie mogą być krócej niż dzień po
+- przebicie czasu od 1.0 do 0.9 nie może być 4+ razy większe niż poprzednie
+
+funkcja celu:
+- minimalizowanie różnicy między obliczonym prawdopodobieństwem a wynikiem 0-1 (do kwadratu)
+
+
+sieć trenować i zapisywać gdy liczba recalli się podwaja
+dane dzielimy na dane do trenowania i do sprawdzania
+
+p, czas
+-------
+0, 1000
+1, 2000
+1, 4000
+?, T
+
+
+(1, 0, 0, log(2000-1000)) -> 1
+(0, 1, log(2000-1000), log(4000-2000)) -> 1
+(0, 1, log(4000-2000), log(T-4000)) -> ?
+
+LUB
+
+(1, 0, log(2000-1000)) -> 1
+(0, 1, log(4000-2000)) -> 1
+(0, 1, log(T-4000)) -> ?
