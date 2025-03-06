@@ -46,8 +46,8 @@ def on_press(key):
 def activate_model_on_data(data, model):
     model.eval()
     
-    tensor_seq = torch.tensor(data, dtype=torch.float32).unsqueeze(0)  # Dodanie wymiaru batch
-    length = torch.tensor([len(data)], dtype=torch.int64)  # Pojedyncza długość
+    tensor_seq = torch.tensor(data, dtype=torch.float32).unsqueeze(0)
+    length = torch.tensor([len(data)], dtype=torch.int64)
     
     with torch.no_grad():
         output = model(tensor_seq, length)
@@ -56,7 +56,7 @@ def activate_model_on_data(data, model):
     return last_output.item()
 
 sys.stdout.reconfigure(encoding='utf-8')
-course_name = 'french'
+course_name = sys.argv[1]
 vocab = VocabularyLoader(course_name).load()
 memory = MemoryHandler(vocab,course_name).load()
 memory_data_copy = memory.get_data_copy()
