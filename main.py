@@ -6,24 +6,20 @@ from showingorder import ShowingOrder
 from lstmnetwork import LSTMNetwork
 from modeltrainer import ModelTrainer
 from datetime import datetime
-from torch.nn.utils.rnn import pad_sequence
 from pynput import keyboard
+import random
 import torch
-import time
 import os
 import sys
 import config
 
 
-# przerobić żeby pozbyć się scheduled z records, jest niepotrzebne
 # poznać bibliotekę do GUI
 # zaimplementować GUI
-# dodać do config parametr żeby nie zapisywać za każdym razem
 # przy zamykaniu zapisywanie
 # uobiektowić główną pętlę
 # zrobić pakiety
 # rozważyć zrobienie hermetyzacji zmiennych _ __
-# test.py do usunięcia
 # atomizacja zapisywania, żeby nie można było zamknąć w trakcie zapisywania do memory
 
 
@@ -66,7 +62,6 @@ model_path = "models/" + course_name + ".pt"
 model = LSTMNetwork()
 
 if memory.update_level(entries_count):
-    print(True)
     model = ModelTrainer(model, config.epochs, train).train()
     model.save(model_path)
 
@@ -81,18 +76,18 @@ for entry in order:
     memory_cell = memory.get((entry[0],entry[1]))
     timestamp = int(datetime.now().timestamp())
 
-    if memory_cell["scheduled"] > timestamp:
+    previous_gap = (config.min_first_gap/config.max_gap_multiplier)*config.max_gap_multiplier**(len(memory_cell["time"])-1)
+    if len(memory_cell["time"]) > 1 and memory_cell["time"][-1]-memory_cell["time"][-2] < previous_gap:
+        previous_gap = memory_cell["time"][-1]-memory_cell["time"][-2]
+
+    new_timestamp = memory_cell["time"][-1]+min(int(previous_gap*config.max_gap_multiplier),config.max_gap)
+            
+    if new_timestamp > timestamp:
         eval = EvalSet(memory_cell).convert()
         result = activate_model_on_data(eval, model)
 
         if result > config.recall:
             continue
-
-        print(eval)
-        print(result)
-    
-    print(timestamp)
-    print(memory_cell["scheduled"])
     
     print(question)
     
@@ -115,17 +110,10 @@ for entry in order:
             print(recall)
 
             memory.add_entry(entry[0],entry[1],timestamp,recall)
-
-            previous_gap = (config.min_first_gap/config.max_gap_multiplier)*config.max_gap_multiplier**(len(memory_cell["time"])-1)
             
-            if len(memory_cell["time"]) > 1 and memory_cell["time"][-1]-memory_cell["time"][-2] < previous_gap:
-                previous_gap = memory_cell["time"][-1]-memory_cell["time"][-2]
-            
-            new_timestamp = memory_cell["time"][-1]+min(int(previous_gap*config.max_gap_multiplier),config.max_gap)
-            
-            memory.schedule(entry[0],entry[1],new_timestamp)
-            
-            memory.save()
+            if random.randint(1,config.rep_per_save) == 1:
+                print("saving...")
+                memory.save()
             break
     
     os.system("cls")

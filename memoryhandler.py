@@ -30,8 +30,7 @@ class MemoryHandler:
                 if (i,poa) not in self.data:
                     self.data[(i,poa)] = {
                         "time": [],
-                        "values": [],
-                        "scheduled": 0
+                        "values": []
                     }
 
         self.save()
@@ -43,9 +42,6 @@ class MemoryHandler:
         self.data[(line,poa)]["values"].append(result)
 
         return self
-
-    def schedule(self,line,poa,date):
-        self.data[(line,poa)]["scheduled"] = date
     
     def update_level(self,entries_count):
         level = int(math.log(entries_count+1e-10)/math.log(config.entries_multiplier))
