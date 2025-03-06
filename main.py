@@ -12,11 +12,11 @@ import torch
 import os
 import sys
 import config
+import atexit
 
 
 # poznać bibliotekę do GUI
 # zaimplementować GUI
-# przy zamykaniu zapisywanie
 # uobiektowić główną pętlę
 # zrobić pakiety
 # rozważyć zrobienie hermetyzacji zmiennych _ __
@@ -38,6 +38,12 @@ def on_press(key):
         pressed_key = key
     return False
 
+def on_exit():
+    print("Exiting and saving...")
+    memory.save()
+    print("Saved")
+
+atexit.register(on_exit)
 
 def activate_model_on_data(data, model):
     model.eval()
@@ -88,6 +94,8 @@ for entry in order:
 
         if result > config.recall:
             continue
+
+        print("Likelihood: ", result)
     
     print(question)
     
@@ -112,7 +120,7 @@ for entry in order:
             memory.add_entry(entry[0],entry[1],timestamp,recall)
             
             if random.randint(1,config.rep_per_save) == 1:
-                print("saving...")
+                print("Saving...")
                 memory.save()
             break
     
