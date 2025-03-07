@@ -86,7 +86,10 @@ for entry in order:
     if len(memory_cell["time"]) > 1 and memory_cell["time"][-1]-memory_cell["time"][-2] < previous_gap:
         previous_gap = memory_cell["time"][-1]-memory_cell["time"][-2]
 
-    new_timestamp = memory_cell["time"][-1]+min(int(previous_gap*config.max_gap_multiplier),config.max_gap)
+    if len(memory_cell["time"]) > 0:
+        new_timestamp = memory_cell["time"][-1]+min(int(previous_gap*config.max_gap_multiplier),config.max_gap)
+    else:
+        new_timestamp = 0
             
     if new_timestamp > timestamp:
         eval = EvalSet(memory_cell).convert()

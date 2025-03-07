@@ -5,4 +5,4 @@ entries_multiplier = 1.3
 epochs = 100
 recall = 0.9
 max_item_rep_in_session = 5
-rep_per_save = 5
+rep_per_save = 10
