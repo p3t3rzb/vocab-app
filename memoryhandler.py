@@ -19,9 +19,14 @@ class MemoryHandler:
         return self.data[key]
     
     def load(self):
-        with open("records/" + self.course_name + ".json", "r", encoding="utf-8") as f:
-            self.data = {eval(k): v for k, v in json.load(f).items()}
-        
+        try:
+            with open("records/" + self.course_name + ".json", "r", encoding="utf-8") as f:
+                self.data = {eval(k): v for k, v in json.load(f).items()}
+        except FileNotFoundError:
+            with open("records/" + self.course_name + ".json", "w", encoding="utf-8") as f:
+                json.dump({}, f)
+            self.data = {}
+
         if (-1,0) not in self.data:
             self.data[(-1,0)] = 0
         
