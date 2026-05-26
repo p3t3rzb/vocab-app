@@ -1,3 +1,9 @@
+"""Wrap a trained :class:`RecallLSTM` for prediction-time use.
+
+The interesting work happens in :meth:`Predictor.next_repetition_delta`,
+which combines a binary search with a polynomial refinement to estimate the
+moment when ``P(recall)`` falls below the configured threshold.
+"""
 from __future__ import annotations
 
 import math
@@ -16,17 +22,19 @@ def _poly_threshold_crossing(
     degree: int,
     reference_log_delta: float,
 ) -> float | None:
-    """
-    Fit a degree-`degree` polynomial to (log(delta+1), prob) points and return
-    the delta (in seconds) where the polynomial crosses `threshold`, or None if
-    no valid crossing is found.
+    """Fit a polynomial to probed ``(delta, P(recall))`` points and solve for the threshold crossing.
 
-    A crossing is valid only if:
-    - the root is positive (in log-space), and
-    - the polynomial is strictly decreasing at the root (derivative < 0).
+    The fit is done in ``log(delta + 1)`` space — the same feature the model
+    consumes — which keeps the polynomial well-conditioned across many orders
+    of magnitude.
 
-    `reference_log_delta` selects among multiple roots: we pick the real root
-    closest to it.
+    A root is accepted only if it is strictly positive (in log-space) and the
+    polynomial is **decreasing** at the root (derivative < 0). When multiple
+    valid roots exist, the one nearest ``reference_log_delta`` is returned.
+
+    Returns:
+        The crossing delta in seconds, or ``None`` if no valid root is found
+        or the fit fails.
     """
     xs = np.array([math.log(d + 1) for d, _ in points])
     ys = np.array([p for _, p in points])
@@ -55,13 +63,36 @@ def _poly_threshold_crossing(
 
 
 class Predictor:
+    """Inference helper for a trained :class:`RecallLSTM`.
+
+    Exposes :meth:`recall_probability` (point query) and
+    :meth:`next_repetition_delta` (when should the word be reviewed next).
+    """
+
     def __init__(self, model: RecallLSTM, config: PredictConfig | None = None) -> None:
+        """Wrap an already-trained, already-on-device model.
+
+        Args:
+            model: The trained network. Caller is responsible for placing it
+                on the desired device and calling ``.eval()``.
+            config: Override :class:`PredictConfig` defaults. ``None`` uses
+                the dataclass defaults.
+        """
         self.model = model
         self.config = config or PredictConfig()
         self.device = next(model.parameters()).device
 
     def recall_probability(self, reps: list[Repetition], delta_seconds: float) -> float:
-        """P(remembered) if tested `delta_seconds` after the last rep in `reps`."""
+        """Return P(remembered) if the word is tested ``delta_seconds`` after its last rep.
+
+        Args:
+            reps: Repetition history, oldest first. Must be non-empty.
+            delta_seconds: Hypothetical gap (in seconds) after the most recent
+                rep at which to probe the model.
+
+        Raises:
+            ValueError: if ``reps`` is empty.
+        """
         if not reps:
             raise ValueError("Need at least one historical repetition")
 
@@ -79,12 +110,23 @@ class Predictor:
         return probs[0, -1].item()
 
     def next_repetition_delta(self, reps: list[Repetition]) -> float:
-        """
-        Seconds after the last rep when recall probability crosses below the threshold.
+        """Estimate seconds-until-next-review.
 
-        Runs a binary search to bracket the crossing, fits a polynomial to all
-        probed points, solves for the polynomial crossing, and returns the
-        geometric mean of the two estimates.
+        Algorithm:
+
+        1. If ``P(Δt = 1s) < threshold`` the word is already due — return ``0``.
+        2. **Doubling**: start with ``hi = initial_delta_seconds`` and double
+           until ``P(hi) < threshold``. Return ``max_delta_seconds`` if the
+           threshold is never crossed.
+        3. **Bisect**: run ``bisect_steps`` of binary search between ``lo``
+           and ``hi``, collecting more ``(delta, prob)`` points.
+        4. **Polynomial refinement**: fit a polynomial to every probed point
+           and solve for the threshold crossing analytically. Use it only
+           when it is positive, finite, and the polynomial is decreasing at
+           the root.
+        5. Return the **geometric mean** of the binary-search result and the
+           polynomial result (falling back to the binary-search result alone
+           when the polynomial root is rejected).
         """
         cfg = self.config
         threshold = cfg.recall_threshold

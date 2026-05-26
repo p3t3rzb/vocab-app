@@ -1,3 +1,8 @@
+"""Add / edit dialog for a single word.
+
+A small modal :class:`~customtkinter.CTkToplevel` with two text fields and
+Save / Cancel buttons. Changes are committed only when Save is clicked.
+"""
 from __future__ import annotations
 
 from tkinter import messagebox
@@ -15,8 +20,10 @@ if TYPE_CHECKING:
 class WordEditDialog(ctk.CTkToplevel):
     """Modal dialog for adding or editing a word pair.
 
-    Pass word=None to create a new word, or an existing Word to edit it.
-    Changes are committed only when the user clicks Save.
+    Pass ``word=None`` to create a new word, or an existing :class:`Word`
+    instance to edit it. Newly created words start with
+    ``next_rep_fwd_at = next_rep_rev_at = 0`` (immediately due) so they show
+    up in the next practice session before any model has scheduled them.
     """
 
     def __init__(
@@ -48,12 +55,14 @@ class WordEditDialog(ctk.CTkToplevel):
         self.after(50, self._safe_grab)
 
     def _safe_grab(self) -> None:
+        """Re-grab the modal focus once the window is fully realised (ignoring failures)."""
         try:
             self.grab_set()
         except Exception:
             pass
 
     def _build_ui(self) -> None:
+        """Lay out the two text fields, action buttons, and key bindings."""
         self.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(
@@ -95,6 +104,7 @@ class WordEditDialog(ctk.CTkToplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
 
     def _save(self) -> None:
+        """Validate inputs, persist the new/updated word, and close the dialog."""
         src_text = self._src_entry.get().strip()
         tgt_text = self._tgt_entry.get().strip()
 

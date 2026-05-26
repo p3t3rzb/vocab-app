@@ -27,6 +27,7 @@ from src.model.config import PredictConfig
 
 
 def _fmt_duration(seconds: float) -> str:
+    """Format a duration in seconds as a compact human string (e.g. ``"2d 4h 13m"``)."""
     seconds = int(seconds)
     days, seconds = divmod(seconds, 86400)
     hours, seconds = divmod(seconds, 3600)
@@ -48,6 +49,7 @@ def _predict_for_direction(
     direction: Direction,
     show_history: bool,
 ) -> None:
+    """Print the next-repetition prediction (and optional history) for one direction."""
     with get_session() as session:
         reps = RepetitionRepository(session).get_for_word(word_id, direction)
 
@@ -94,6 +96,7 @@ def _predict_for_direction(
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse CLI flags for the predict script."""
     p = argparse.ArgumentParser(description="Predict next repetition time for a vocabulary word")
     p.add_argument("--db", required=True, help="Path to the SQLite database, e.g. storage/french.db")
     group = p.add_mutually_exclusive_group(required=True)
@@ -110,6 +113,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Entry point: resolve the word(s) to predict, load the model, print results."""
     args = _parse_args()
 
     db_path = args.db

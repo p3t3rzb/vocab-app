@@ -1,3 +1,8 @@
+"""Word-detail screen — full repetition history for a single word.
+
+Reached from the word list by double-clicking a row. Shows every practice
+event (in either direction) ordered by timestamp.
+"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -15,16 +20,20 @@ if TYPE_CHECKING:
 
 
 def _fmt_ts(ts: int) -> str:
+    """Format a Unix timestamp as ``"YYYY-MM-DD  HH:MM:SS"``."""
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d  %H:%M:%S")
 
 
 def _fmt_direction(rep: Repetition, src_lang: str, tgt_lang: str) -> str:
+    """Format a repetition's direction as ``"source → target"`` or vice versa."""
     if rep.direction == int(Direction.FORWARD):
         return f"{src_lang} → {tgt_lang}"
     return f"{tgt_lang} → {src_lang}"
 
 
 class WordDetailScreen(ctk.CTkFrame):
+    """Lists every repetition event for one word, in either direction."""
+
     def __init__(
         self,
         master: App,
@@ -42,6 +51,7 @@ class WordDetailScreen(ctk.CTkFrame):
         self._load()
 
     def _build_ui(self) -> None:
+        """Construct the header, summary label, and history treeview."""
         self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
@@ -107,6 +117,7 @@ class WordDetailScreen(ctk.CTkFrame):
         vsb.grid(row=0, column=1, sticky="ns")
 
     def _load(self) -> None:
+        """Fetch the word and its repetition history, then populate the treeview."""
         with get_session() as session:
             word = WordRepository(session).get_by_id(self._word_id)
             if word is None:
@@ -145,6 +156,7 @@ class WordDetailScreen(ctk.CTkFrame):
         )
 
     def _edit_word(self) -> None:
+        """Open the edit dialog for this word; reload the history on close."""
         with get_session() as session:
             word = WordRepository(session).get_by_id(self._word_id)
             if word is None:

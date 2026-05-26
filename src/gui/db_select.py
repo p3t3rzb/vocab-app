@@ -1,3 +1,9 @@
+"""Database-selection screen — the app's home view.
+
+Lists every ``*.db`` file in ``storage/`` along with its language pair, word
+count, and most recent training timestamp. Also hosts the "New database"
+dialog and the navigation entry point to the global settings screen.
+"""
 from __future__ import annotations
 
 import sqlite3
@@ -16,6 +22,11 @@ STORAGE_DIR = Path(__file__).parent.parent.parent / "storage"
 
 
 def _read_language_pair(db_path: Path) -> tuple[str, str] | None:
+    """Return ``(source_language, target_language)`` for ``db_path``, or ``None`` on failure.
+
+    Uses raw sqlite3 (not SQLAlchemy) so we can peek at every database in
+    ``storage/`` without re-initialising the global engine each time.
+    """
     try:
         con = sqlite3.connect(str(db_path))
         row = con.execute(
@@ -28,6 +39,8 @@ def _read_language_pair(db_path: Path) -> tuple[str, str] | None:
 
 
 class DatabaseSelectScreen(ctk.CTkFrame):
+    """Lists every database in ``storage/`` and lets the user open or create one."""
+
     def __init__(self, master: App) -> None:
         super().__init__(master, corner_radius=0)
         self._app = master
@@ -37,6 +50,7 @@ class DatabaseSelectScreen(ctk.CTkFrame):
         self._load_databases()
 
     def _build_ui(self) -> None:
+        """Construct the title, treeview, scroll bar, and action buttons."""
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
@@ -89,6 +103,7 @@ class DatabaseSelectScreen(ctk.CTkFrame):
         ctk.CTkButton(btn_frame, text="Open", width=100, command=self._open_selected).pack(side="left", padx=4)
 
     def _load_databases(self) -> None:
+        """Re-scan ``storage/`` and populate the treeview from scratch."""
         self._tree.delete(*self._tree.get_children())
         self._db_entries.clear()
 
@@ -110,6 +125,7 @@ class DatabaseSelectScreen(ctk.CTkFrame):
             )
 
     def _new_database(self) -> None:
+        """Open the "New database" dialog and, on success, navigate to it."""
         dialog = NewDatabaseDialog(self)
         self.wait_window(dialog)
         if dialog.created_path is not None:
@@ -117,6 +133,7 @@ class DatabaseSelectScreen(ctk.CTkFrame):
             self._app.show_word_list(dialog.created_path, dialog.src_lang, dialog.tgt_lang)
 
     def _open_selected(self) -> None:
+        """Navigate to the word list of the currently selected database."""
         sel = self._tree.selection()
         if not sel:
             return
@@ -126,6 +143,13 @@ class DatabaseSelectScreen(ctk.CTkFrame):
 
 
 class NewDatabaseDialog(ctk.CTkToplevel):
+    """Modal dialog: collect language names and create an empty database.
+
+    On Create, the dialog calls :func:`init_db` to materialise the new SQLite
+    file and stores the resulting path in :attr:`created_path` so the parent
+    screen can pick it up.
+    """
+
     def __init__(self, master: ctk.CTkBaseClass) -> None:
         super().__init__(master)
         self.created_path: Path | None = None
@@ -145,12 +169,18 @@ class NewDatabaseDialog(ctk.CTkToplevel):
         self.after(50, self._safe_grab)
 
     def _safe_grab(self) -> None:
+        """Re-attempt the modal grab once the window is fully realised.
+
+        On some window managers ``grab_set`` raises if called too early; we
+        ignore the failure since the up-front ``grab_set`` usually succeeds.
+        """
         try:
             self.grab_set()
         except Exception:
             pass
 
     def _build_ui(self) -> None:
+        """Lay out the language entries, filename preview, and action buttons."""
         self.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(self, text="Source language:", anchor="e", width=130).grid(
@@ -185,6 +215,7 @@ class NewDatabaseDialog(ctk.CTkToplevel):
         self.bind("<Escape>", lambda _e: self.destroy())
 
     def _update_filename(self) -> None:
+        """Refresh the read-only filename label whenever an entry changes."""
         src = self._src_entry.get().strip()
         tgt = self._tgt_entry.get().strip()
         if src and tgt:
@@ -196,6 +227,7 @@ class NewDatabaseDialog(ctk.CTkToplevel):
             self._filename_label.configure(text="")
 
     def _create(self) -> None:
+        """Validate inputs, create the database file, and close the dialog."""
         src_lang = self._src_entry.get().strip()
         tgt_lang = self._tgt_entry.get().strip()
 
@@ -228,6 +260,7 @@ class NewDatabaseDialog(ctk.CTkToplevel):
 
 
 def _last_trained(src: str, tgt: str) -> str:
+    """Return the checkpoint mtime as a display string, or ``"—"`` if not trained."""
     from datetime import datetime
     ckpt = STORAGE_DIR / "models" / f"{src.lower()}_{tgt.lower()}.pt"
     if not ckpt.exists():
@@ -236,6 +269,7 @@ def _last_trained(src: str, tgt: str) -> str:
 
 
 def _word_count(db_path: Path) -> int:
+    """Return ``COUNT(*)`` from the ``words`` table, or ``0`` on any error."""
     try:
         con = sqlite3.connect(str(db_path))
         row = con.execute("SELECT COUNT(*) FROM words").fetchone()
@@ -246,6 +280,12 @@ def _word_count(db_path: Path) -> int:
 
 
 def _apply_treeview_style(style: ttk.Style) -> None:
+    """Configure the shared ``App.Treeview`` ttk style for the current appearance mode.
+
+    Called from every screen that hosts a treeview so colour, padding, and
+    selection styles stay consistent with the surrounding customtkinter
+    widgets in both light and dark mode.
+    """
     appearance = ctk.get_appearance_mode()
     if appearance == "Dark":
         bg, fg, sel_bg, heading_bg, border = "#2b2b2b", "#dce4ee", "#1f6aa5", "#1a1a2e", "#3a3a3a"

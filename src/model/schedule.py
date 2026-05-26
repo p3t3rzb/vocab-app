@@ -1,3 +1,11 @@
+"""Batch-compute and persist ``next_repetition_at`` for every word.
+
+This module is the bridge between the prediction model and the database:
+after training (or after a settings change that affects scheduling) we call
+:func:`compute_all_schedules`, which vectorises the per-word binary search
+across whole chunks of words for a roughly 200× speedup over per-word
+inference.
+"""
 from __future__ import annotations
 
 import math
@@ -29,10 +37,11 @@ def compute_next_repetition_at(
     reps_rev: list[Repetition],
     predictor: Predictor,
 ) -> int:
-    """Return Unix timestamp when this word next needs practice (single-word helper).
+    """Return the Unix timestamp at which this word next needs practice (single-word helper).
 
-    Returns 0 when neither direction has any history (immediately due).
-    Only directions with ≥1 rep contribute to the minimum.
+    Returns ``0`` when neither direction has any history (immediately due).
+    Only directions with ≥1 rep contribute to the minimum — a direction with
+    no history is ignored rather than treated as "due now" for that direction.
     """
     if not reps_fwd and not reps_rev:
         return 0
@@ -53,7 +62,11 @@ def compute_next_repetition_at(
 # ---------------------------------------------------------------------------
 
 def _make_base_seq(reps: list[Repetition]) -> list[list[float]]:
-    """Build LSTM input rows for a rep history, excluding the probe timestep."""
+    """Build LSTM input rows for a rep history, excluding the probe timestep.
+
+    The final timestep — encoding the hypothetical "next" gap — is appended
+    later by :func:`_batch_probe` once we know which delta we want to probe.
+    """
     base: list[list[float]] = []
     for i in range(1, len(reps)):
         dt = reps[i].practiced_at - reps[i - 1].practiced_at
@@ -67,11 +80,12 @@ def _batch_probe(
     model: RecallLSTM,
     device: torch.device,
 ) -> list[float]:
-    """
-    Single batched LSTM forward pass for all tasks at their respective probe deltas.
+    """Run a single batched LSTM forward pass over all tasks at their respective probe deltas.
 
-    Appends the probe timestep [log(delta+1), last_remembered] to each base sequence,
-    pads the batch to equal length, and returns the last-step probability per task.
+    Each task's pre-built base sequence is extended with a final
+    ``[log(delta + 1), last_remembered]`` row, the batch is padded to equal
+    length, and the model is called once. Returns the last-step probability
+    for each task.
     """
     sequences: list[list[list[float]]] = []
     lengths: list[int] = []
@@ -100,15 +114,18 @@ def _process_chunk(
     cfg: PredictConfig,
     device: torch.device,
 ) -> dict[int, tuple[int | None, int | None]]:
-    """
-    Run the full binary search for a chunk of words.
+    """Run the full binary search vectorised across a chunk of words.
 
-    Returns {word_id: (fwd_ts, rev_ts)} where each timestamp is the Unix time
-    when that direction is next due, or None if that direction has no history.
-    Words with no history in either direction are omitted from the result.
+    The four phases (initial probe at Δ=1s → doubling → bisect →
+    polynomial refinement) are each performed via a single batched LSTM call
+    over all in-flight tasks, so the chunk completes in roughly 20 model
+    forwards regardless of how many words it contains.
 
-    The search (initial check → doubling → bisect → polynomial refinement) is
-    vectorised across all (word, direction) tasks in the chunk via batched LSTM calls.
+    Returns:
+        A dict ``{word_id: (fwd_ts, rev_ts)}`` where each timestamp is the
+        Unix time at which that direction is next due, or ``None`` if that
+        direction has no repetition history. Words with no history in either
+        direction are omitted entirely so existing DB values stay untouched.
     """
     threshold = cfg.recall_threshold
     wd_results: dict[tuple[int, int], int] = {}
@@ -217,15 +234,20 @@ def compute_all_schedules(
     stop_event: threading.Event | None = None,
     cfg: PredictConfig | None = None,
 ) -> None:
-    """
-    Compute next_repetition_at for every word and write results to the database.
+    """Compute ``next_repetition_at`` for every word and persist the results.
 
-    Words are processed in chunks of _CHUNK_SIZE. Within each chunk the full binary
-    search (initial check, doubling, bisect, polynomial refinement) is vectorised via
-    batched LSTM calls — ~20 forward passes per chunk instead of ~20 per word.
+    Words are processed in chunks of :data:`_CHUNK_SIZE`. Within each chunk
+    the full search (initial check → doubling → bisect → polynomial
+    refinement) is vectorised via batched LSTM calls.
 
-    on_progress(words_done, total_words) is called after each chunk completes.
-    Respects stop_event: returns without writing if cancelled.
+    Args:
+        model_path: Path to the saved ``.pt`` checkpoint.
+        on_progress: Optional callback invoked as ``on_progress(words_done,
+            total_words)`` after each chunk completes.
+        stop_event: Optional :class:`threading.Event` for cancellation.
+            When set, the function returns without writing any pending updates.
+        cfg: Override the default :class:`PredictConfig` (e.g. with the
+            user-configured recall threshold).
     """
     model = load_model(str(model_path))
     if cfg is None:

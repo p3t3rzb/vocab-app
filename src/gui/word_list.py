@@ -1,3 +1,9 @@
+"""Word-list screen — browse, search, add, edit, delete words for one database.
+
+Also hosts the entry buttons that navigate to the Practice and Train Model
+screens. The treeview shows per-direction due times rendered by
+:func:`_format_due`.
+"""
 from __future__ import annotations
 
 import time
@@ -16,6 +22,12 @@ if TYPE_CHECKING:
 
 
 def _format_due(ts: int | None) -> str:
+    """Render a due timestamp as ``"Due now"`` / ``"in 2d 4h"`` / ``"–"``.
+
+    ``None`` becomes ``"–"`` (no model trained yet), ``≤ now`` becomes
+    ``"Due now"``, and otherwise a coarse "in Xd Yh" string. Minute-level
+    precision is only shown when the remaining time is under an hour.
+    """
     if ts is None:
         return "–"
     remaining = ts - int(time.time())
@@ -32,6 +44,8 @@ def _format_due(ts: int | None) -> str:
 
 
 class WordListScreen(ctk.CTkFrame):
+    """Scrollable, searchable table of words with edit / delete / practice / train actions."""
+
     def __init__(
         self,
         master: App,
@@ -58,6 +72,7 @@ class WordListScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        """Build the header, search/action toolbar, and word treeview."""
         self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
@@ -159,11 +174,13 @@ class WordListScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _load_words(self) -> None:
+        """Load every word from the database and re-render the treeview."""
         with get_session() as session:
             self._all_words = WordRepository(session).get_all()
         self._apply_filter()
 
     def _apply_filter(self) -> None:
+        """Filter the cached word list by the current search query and refresh the view."""
         query = self._search_var.get().strip().lower()
         if query:
             self._filtered = [
@@ -196,6 +213,7 @@ class WordListScreen(ctk.CTkFrame):
         self._btn_delete.configure(state="disabled")
 
     def _selected_word(self) -> Word | None:
+        """Return the :class:`Word` for the currently highlighted row, or ``None``."""
         sel = self._tree.selection()
         if not sel:
             return None
@@ -205,6 +223,7 @@ class WordListScreen(ctk.CTkFrame):
         return self._filtered[idx]
 
     def _on_select(self, _event: object) -> None:
+        """Enable/disable the Edit and Delete buttons based on selection state."""
         has = bool(self._tree.selection())
         state = "normal" if has else "disabled"
         self._btn_edit.configure(state=state)
@@ -215,12 +234,14 @@ class WordListScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _open_detail(self) -> None:
+        """Open the per-word detail screen for the selected row."""
         word = self._selected_word()
         if word is None:
             return
         self._app.show_word_detail(word.id)
 
     def _add_word(self) -> None:
+        """Open the modal "Add word" dialog and reload on close."""
         from .word_edit import WordEditDialog
         dialog = WordEditDialog(
             self,
@@ -232,6 +253,7 @@ class WordListScreen(ctk.CTkFrame):
         self._load_words()
 
     def _edit_word(self) -> None:
+        """Open the modal "Edit word" dialog for the selected row."""
         word = self._selected_word()
         if word is None:
             return
@@ -246,6 +268,7 @@ class WordListScreen(ctk.CTkFrame):
         self._load_words()
 
     def _delete_word(self) -> None:
+        """Prompt for confirmation, then delete the selected word and its history."""
         word = self._selected_word()
         if word is None:
             return
@@ -265,7 +288,9 @@ class WordListScreen(ctk.CTkFrame):
         self._load_words()
 
     def _open_train_dialog(self) -> None:
+        """Navigate to the Train Model screen."""
         self._app.show_train_screen(self._db_path, self._src_lang, self._tgt_lang)
 
     def _open_practice(self) -> None:
+        """Navigate to the Practice screen."""
         self._app.show_practice_screen(self._db_path, self._src_lang, self._tgt_lang)

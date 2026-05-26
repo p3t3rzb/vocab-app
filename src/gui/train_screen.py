@@ -1,3 +1,14 @@
+"""Full-screen training UI.
+
+Owns a background thread that runs :func:`src.model.train.train` and then
+:func:`src.model.schedule.compute_all_schedules`. The worker pushes progress
+events onto a queue that the main thread drains via :meth:`TrainScreen._poll`
+every 100 ms — keeping all Tk calls on the GUI thread.
+
+Plot rendering avoids the TkAgg matplotlib backend (which requires a C
+extension) by rendering with the Agg backend to PNG bytes and decoding via
+``tk.PhotoImage`` — works with the pure-Python Tcl/Tk that ships with uv.
+"""
 from __future__ import annotations
 
 import base64
@@ -21,6 +32,8 @@ if TYPE_CHECKING:
 
 
 class TrainScreen(ctk.CTkFrame):
+    """Train a model, plot live loss curves, then auto-recalc all schedules."""
+
     _POLL_MS = 100
 
     def __init__(
@@ -50,6 +63,7 @@ class TrainScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        """Build the header, plot area, status line, progress bar, and controls."""
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
@@ -116,6 +130,13 @@ class TrainScreen(ctk.CTkFrame):
         self._btn_cancel.pack(side="left", padx=6)
 
     def _build_figure(self) -> None:
+        """Create the matplotlib figure used for the live loss plot.
+
+        Theme colours are chosen to match the surrounding customtkinter
+        widgets in both light and dark mode. An initial blank render is
+        scheduled after a short delay so the widget has time to acquire a
+        size.
+        """
         dark = ctk.get_appearance_mode() == "Dark"
         fig_bg = "#2b2b2b" if dark else "#f5f5f5"
         ax_bg = "#3a3a3a" if dark else "#ffffff"
@@ -153,6 +174,11 @@ class TrainScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _render_plot(self) -> None:
+        """Resize the figure to match the label and blit it onto the Tk widget.
+
+        Re-tries via ``after`` if the underlying widget hasn't been laid out
+        yet (winfo_width/height < 10).
+        """
         w = self._plot_label.winfo_width()
         h = self._plot_label.winfo_height()
         if w < 10 or h < 10:
@@ -173,6 +199,7 @@ class TrainScreen(ctk.CTkFrame):
         self._plot_label._photo = photo  # prevent GC
 
     def _update_plot(self) -> None:
+        """Refresh the train/val lines with the latest accumulated data."""
         self._line_train.set_data(self._epoch_nums, self._train_losses)
         self._line_val.set_data(self._epoch_nums, self._val_losses)
         self._ax.relim()
@@ -180,6 +207,7 @@ class TrainScreen(ctk.CTkFrame):
         self._render_plot()
 
     def _reset_plot(self) -> None:
+        """Clear both lines (used when a new training run starts)."""
         self._line_train.set_data([], [])
         self._line_val.set_data([], [])
         self._ax.relim()
@@ -190,6 +218,7 @@ class TrainScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _start_training(self) -> None:
+        """Validate inputs, spawn the training worker, and start polling its queue."""
         if self._training:
             return
 
@@ -230,6 +259,7 @@ class TrainScreen(ctk.CTkFrame):
         self._poll()
 
     def _training_worker(self, db_url: str, cfg) -> None:
+        """Worker thread: run :func:`train` and push outcome events onto the queue."""
         try:
             from src.model.train import train
 
@@ -247,6 +277,7 @@ class TrainScreen(ctk.CTkFrame):
             self._queue.put(("error", str(exc)))
 
     def _poll(self) -> None:
+        """Drain worker events from the queue and reschedule until idle."""
         try:
             while True:
                 item = self._queue.get_nowait()
@@ -300,6 +331,7 @@ class TrainScreen(ctk.CTkFrame):
             self.after(self._POLL_MS, self._poll)
 
     def _on_training_done(self, checkpoint_path: str) -> None:
+        """Training finished — kick off the schedule-recalculation phase."""
         self._training = False
         self._computing_schedules = True
         self._schedule_stop_event.clear()
@@ -318,6 +350,7 @@ class TrainScreen(ctk.CTkFrame):
         self._thread.start()
 
     def _schedule_worker(self, model_path) -> None:
+        """Worker thread: recompute every word's ``next_repetition_at`` using the new model."""
         try:
             from src.model.schedule import compute_all_schedules
             from src.settings import load_settings
@@ -339,6 +372,7 @@ class TrainScreen(ctk.CTkFrame):
             self._queue.put(("schedules_error", str(exc)))
 
     def _on_schedules_done(self) -> None:
+        """All schedules updated — re-enable controls and report success."""
         self._computing_schedules = False
         self._progress.stop()
         self._progress.set(0)
@@ -348,6 +382,7 @@ class TrainScreen(ctk.CTkFrame):
         self._status_var.set("Done — model trained and schedules updated.")
 
     def _on_schedules_error(self, msg: str) -> None:
+        """Schedule worker raised — show the error and reset controls."""
         self._computing_schedules = False
         self._progress.stop()
         self._progress.set(0)
@@ -358,6 +393,7 @@ class TrainScreen(ctk.CTkFrame):
         messagebox.showerror("Schedule error", msg, parent=self)
 
     def _on_training_finished(self, message: str, is_error: bool = False) -> None:
+        """Reset all UI state after training stops (cancelled, errored, or completed)."""
         self._training = False
         self._computing_schedules = False
         self._progress.stop()
@@ -370,6 +406,7 @@ class TrainScreen(ctk.CTkFrame):
             messagebox.showerror("Training error", message, parent=self)
 
     def _cancel_training(self) -> None:
+        """Signal the active worker (training or schedule recalc) to stop."""
         if self._training:
             self._stop_event.set()
             self._btn_cancel.configure(state="disabled")
@@ -380,6 +417,7 @@ class TrainScreen(ctk.CTkFrame):
             self._status_var.set("Cancelling schedule computation…")
 
     def _go_back(self) -> None:
+        """Navigate to the word list, confirming with the user if work is in progress."""
         if self._training:
             confirmed = messagebox.askyesno(
                 "Training in progress",

@@ -1,3 +1,10 @@
+"""Global, per-installation user settings.
+
+Settings are stored as a single JSON file at ``storage/settings.json`` and are
+shared across every language-pair database. Use :func:`load_settings` to read
+the current values (returning defaults if the file is missing or invalid) and
+:func:`save_settings` to persist changes.
+"""
 from __future__ import annotations
 
 import json
@@ -11,11 +18,27 @@ SETTINGS_PATH = Path(__file__).parent.parent / "storage" / "settings.json"
 
 @dataclass
 class AppSettings:
+    """User-configurable application settings.
+
+    Attributes:
+        recall_threshold: P(recall) level below which a word is considered due.
+            Lower values mean longer intervals between repetitions.
+        max_delta_seconds: Hard cap on the predicted interval to the next
+            repetition. Defaults to one year.
+        appearance_mode: ``"Light"``, ``"Dark"``, or ``"System"`` — applied via
+            ``ctk.set_appearance_mode`` at startup and when the user saves.
+    """
+
     recall_threshold: float = 0.80
     max_delta_seconds: float = 365 * 86400.0
     appearance_mode: str = "System"  # "Light" | "Dark" | "System"
 
     def to_predict_config(self) -> PredictConfig:
+        """Build a :class:`PredictConfig` with this settings' threshold/cap.
+
+        Pass the result into ``compute_all_schedules(cfg=...)`` so the LSTM
+        scheduler honours the user's preferences.
+        """
         return PredictConfig(
             recall_threshold=self.recall_threshold,
             max_delta_seconds=self.max_delta_seconds,
@@ -23,6 +46,12 @@ class AppSettings:
 
 
 def load_settings() -> AppSettings:
+    """Load settings from disk.
+
+    Returns the defaults if the settings file does not exist, is unreadable,
+    or contains invalid JSON. Unknown keys in the file are ignored so that
+    older installations remain forward-compatible.
+    """
     if not SETTINGS_PATH.exists():
         return AppSettings()
     try:
@@ -38,5 +67,6 @@ def load_settings() -> AppSettings:
 
 
 def save_settings(s: AppSettings) -> None:
+    """Write ``s`` to ``storage/settings.json``, creating parent dirs as needed."""
     SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(asdict(s), indent=2))

@@ -1,3 +1,9 @@
+"""Legacy "Train Model" modal dialog.
+
+This pre-dates :mod:`src.gui.train_screen` and is no longer reachable from
+the main navigation. Kept around for now in case the dialog form is wanted
+again — the active code path is the full-screen :class:`TrainScreen`.
+"""
 from __future__ import annotations
 
 import io
@@ -16,6 +22,13 @@ from PIL import Image as _PILImage
 
 
 class TrainModelDialog(ctk.CTkToplevel):
+    """Modal dialog hosting the live training plot, controls, and status line.
+
+    Functionally similar to :class:`src.gui.train_screen.TrainScreen` but
+    renders the plot through PIL → :class:`ctk.CTkImage` rather than the
+    base64/``tk.PhotoImage`` path. Not currently wired into the navigation.
+    """
+
     _POLL_MS = 100
     _PLOT_W = 680
     _PLOT_H = 360
@@ -43,6 +56,7 @@ class TrainModelDialog(ctk.CTkToplevel):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _build_ui(self) -> None:
+        """Construct the figure, plot label, status label, progress bar, and buttons."""
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
@@ -125,6 +139,7 @@ class TrainModelDialog(ctk.CTkToplevel):
     # ------------------------------------------------------------------
 
     def _render_plot(self) -> None:
+        """Render the current figure as a PIL image and place it in the CTkLabel."""
         self._fig.canvas.draw()
         buf = io.BytesIO()
         self._fig.savefig(buf, format="png", bbox_inches="tight")
@@ -137,6 +152,7 @@ class TrainModelDialog(ctk.CTkToplevel):
         self._plot_label._ctk_image = ctk_img  # prevent GC
 
     def _update_plot(self) -> None:
+        """Update the train/val lines with the latest accumulated data and re-render."""
         self._line_train.set_data(self._epoch_nums, self._train_losses)
         self._line_val.set_data(self._epoch_nums, self._val_losses)
         self._ax.relim()
@@ -144,6 +160,7 @@ class TrainModelDialog(ctk.CTkToplevel):
         self._render_plot()
 
     def _reset_plot(self) -> None:
+        """Clear both lines (used at the start of a fresh training run)."""
         self._line_train.set_data([], [])
         self._line_val.set_data([], [])
         self._ax.relim()
@@ -154,6 +171,7 @@ class TrainModelDialog(ctk.CTkToplevel):
     # ------------------------------------------------------------------
 
     def _start_training(self) -> None:
+        """Validate the epoch count, kick off the worker, and start polling."""
         if self._training:
             return
 
@@ -194,6 +212,7 @@ class TrainModelDialog(ctk.CTkToplevel):
         self._poll()
 
     def _training_worker(self, db_url: str, cfg) -> None:
+        """Worker thread: run :func:`train` and push outcome events onto the queue."""
         try:
             from src.model.train import train
 
@@ -211,6 +230,7 @@ class TrainModelDialog(ctk.CTkToplevel):
             self._queue.put(("error", str(exc)))
 
     def _poll(self) -> None:
+        """Drain pending worker events and reschedule until training stops."""
         try:
             while True:
                 item = self._queue.get_nowait()
@@ -248,6 +268,7 @@ class TrainModelDialog(ctk.CTkToplevel):
             self.after(self._POLL_MS, self._poll)
 
     def _on_training_finished(self, message: str, is_error: bool = False) -> None:
+        """Reset the UI state after training finishes (cancelled, errored, or completed)."""
         self._training = False
         self._progress.stop()
         self._progress.set(0)
@@ -259,6 +280,7 @@ class TrainModelDialog(ctk.CTkToplevel):
             messagebox.showerror("Training error", message, parent=self)
 
     def _cancel_training(self) -> None:
+        """Signal the worker to stop after the current epoch finishes."""
         if not self._training:
             return
         self._stop_event.set()
@@ -266,6 +288,7 @@ class TrainModelDialog(ctk.CTkToplevel):
         self._status_var.set("Cancelling… waiting for current epoch to finish.")
 
     def _on_close(self) -> None:
+        """Close the dialog, confirming with the user if training is still running."""
         if self._training:
             confirmed = messagebox.askyesno(
                 "Training in progress",

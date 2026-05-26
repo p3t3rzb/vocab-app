@@ -1,9 +1,13 @@
-"""
-Train the RecallLSTM.
+"""Train the :class:`RecallLSTM` on a database's repetition history.
 
-Usage:
+Usable both as a CLI and programmatically. Example CLI usage::
+
     uv run python -m src.model.train --db storage/french.db
     uv run python -m src.model.train --db storage/french.db --epochs 5 --hidden-size 32
+
+Each run saves a checkpoint at ``storage/models/<source>_<target>.pt``
+containing ``{state_dict, hyperparams, val_loss, epoch}``; subsequent runs
+overwrite that file.
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ from src.model.lstm import RecallLSTM
 
 
 def _get_device() -> torch.device:
+    """Return the best available torch device — MPS, then CUDA, then CPU."""
     if torch.backends.mps.is_available():
         return torch.device("mps")
     if torch.cuda.is_available():
@@ -32,7 +37,11 @@ def _get_device() -> torch.device:
 
 
 def _preload(sequences: list[Sequence], device: torch.device) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pad all sequences and move to device once."""
+    """Pad every sequence to the global max length and move the whole set to ``device``.
+
+    Doing this once up front avoids per-batch host→device copies during
+    training. The full dataset is small (~2 MB) so memory is not a concern.
+    """
     lengths = [len(s.inputs) for s in sequences]
     max_L = max(lengths)
     N = len(sequences)
@@ -47,7 +56,11 @@ def _preload(sequences: list[Sequence], device: torch.device) -> tuple[torch.Ten
 
 
 def _masked_bce(pred: torch.Tensor, target: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
-    """BCE loss over non-padded positions only."""
+    """Binary cross-entropy that ignores padded positions.
+
+    The mask is built from ``lengths`` so padded steps contribute nothing to
+    either the numerator or the denominator of the mean.
+    """
     L = pred.shape[1]
     mask = torch.arange(L, device=pred.device).unsqueeze(0) < lengths.unsqueeze(1)
     loss = nn.functional.binary_cross_entropy(pred, target, reduction="none")
@@ -55,7 +68,12 @@ def _masked_bce(pred: torch.Tensor, target: torch.Tensor, lengths: torch.Tensor)
 
 
 def _make_batches(lengths: torch.Tensor, batch_size: int, shuffle: bool) -> list[torch.Tensor]:
-    """Sort by length so batches share similar lengths, then shuffle batch order."""
+    """Bucket sort by length, then optionally shuffle batch order.
+
+    Sorting by length keeps padding minimal within each batch; shuffling the
+    *order* of the batches preserves SGD's stochasticity during training
+    while still benefiting from the bucketing.
+    """
     sorted_idx = torch.argsort(lengths)
     batches = [sorted_idx[i : i + batch_size] for i in range(0, len(lengths), batch_size)]
     if shuffle:
@@ -71,6 +89,11 @@ def _run_epoch(
     batch_size: int,
     optimizer: torch.optim.Optimizer | None,
 ) -> float:
+    """Run one full pass over the dataset and return the mean per-batch loss.
+
+    If ``optimizer`` is ``None`` the pass runs under ``torch.no_grad`` (used
+    for validation). Otherwise gradients are computed, clipped, and applied.
+    """
     training = optimizer is not None
     model.train(training)
 
@@ -108,7 +131,26 @@ def train(
     on_epoch: Callable[[int, float, float], None] | None = None,
     stop_event: threading.Event | None = None,
 ) -> Path:
-    """Train RecallLSTM and return the path to the best checkpoint."""
+    """Train a :class:`RecallLSTM` and return the path of the best checkpoint.
+
+    The best checkpoint (lowest validation loss seen so far) is saved every
+    time validation loss improves, so cancelling mid-training still leaves a
+    usable model on disk.
+
+    Args:
+        db_url: SQLAlchemy URL for the source database (e.g.
+            ``sqlite:///storage/french.db``).
+        config: Hyperparameter overrides. ``None`` uses :class:`TrainConfig`'s
+            defaults.
+        on_epoch: Optional callback invoked after each epoch with
+            ``(epoch_num, train_loss, val_loss)``. Used by the GUI to update
+            the live training plot.
+        stop_event: Optional :class:`threading.Event` for cancellation.
+            Checked between epochs.
+
+    Returns:
+        Path to the saved checkpoint (``storage/models/<src>_<tgt>.pt``).
+    """
     if config is None:
         config = TrainConfig()
 
@@ -191,7 +233,11 @@ def train(
 
 
 def load_model(checkpoint_path: str | Path, device: torch.device | None = None) -> RecallLSTM:
-    """Load a saved RecallLSTM checkpoint."""
+    """Load a saved :class:`RecallLSTM` checkpoint.
+
+    The model is moved to ``device`` (auto-detected if not supplied) and put
+    into ``eval`` mode, ready for inference.
+    """
     if device is None:
         device = _get_device()
     ckpt = torch.load(checkpoint_path, map_location=device)
@@ -202,6 +248,7 @@ def load_model(checkpoint_path: str | Path, device: torch.device | None = None) 
 
 
 def _parse_args() -> argparse.Namespace:
+    """Parse CLI flags, falling back to :class:`TrainConfig` defaults."""
     _d = TrainConfig()
     p = argparse.ArgumentParser(description="Train RecallLSTM on repetition history")
     p.add_argument("--db", required=True, help="Path to the SQLite database, e.g. storage/french.db")

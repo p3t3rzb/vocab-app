@@ -1,3 +1,14 @@
+"""Full-screen spaced-repetition practice loop.
+
+Arrow-key driven: **↓** reveal answer, **→** remembered, **←** forgot, any
+arrow advances after a result is shown. The queue is built once on entry
+(review-due pairs first, then never-practiced pairs) and re-extended at
+runtime when the predictor marks a card still due immediately after a fail.
+
+Heavy work (model loading, queue construction, per-answer prediction) runs
+on background threads which push events through a queue; the main thread
+drains them every ``_POLL_MS``.
+"""
 from __future__ import annotations
 
 import queue
@@ -34,6 +45,7 @@ _STATE_DONE = "done"
 
 
 def _fmt_past(seconds: int) -> str:
+    """Format an elapsed duration as ``"just now"`` / ``"5m ago"`` / ``"2d 3h ago"``."""
     if seconds < 60:
         return "just now"
     m = seconds // 60
@@ -47,6 +59,7 @@ def _fmt_past(seconds: int) -> str:
 
 
 def _fmt_future(seconds: int) -> str:
+    """Format a forward-looking duration as ``"due now"`` / ``"in 12m"`` / ``"in 5d 2h"``."""
     if seconds <= 0:
         return "due now"
     m = seconds // 60
@@ -60,6 +73,17 @@ def _fmt_future(seconds: int) -> str:
 
 
 class PracticeScreen(ctk.CTkFrame):
+    """Arrow-key driven spaced-repetition session.
+
+    The screen walks through a queue of ``(word, direction)`` cards. Each
+    card transitions through the prompt → answer → saving → result states;
+    after the result, any arrow key advances to the next card.
+
+    If the predictor marks a card still due immediately after a failed
+    attempt, the card is appended to the queue so it returns later in the
+    same session.
+    """
+
     def __init__(
         self,
         master: App,
@@ -95,6 +119,7 @@ class PracticeScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        """Build the header, prompt/answer area, and the hint bar."""
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
@@ -190,6 +215,7 @@ class PracticeScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _bind_keys(self) -> None:
+        """Bind arrow-key handlers on the root window (idempotent)."""
         if self._keys_bound:
             return
         root = self._app
@@ -201,6 +227,7 @@ class PracticeScreen(ctk.CTkFrame):
         self._keys_bound = True
 
     def _unbind_keys(self) -> None:
+        """Remove the root-level arrow-key handlers (idempotent)."""
         if not self._keys_bound:
             return
         root = self._app
@@ -211,11 +238,13 @@ class PracticeScreen(ctk.CTkFrame):
         self._keys_bound = False
 
     def _on_destroy(self, event: object) -> None:
+        """Mark the screen destroyed and detach key bindings when Tk tears it down."""
         if getattr(event, "widget", None) is self:
             self._destroyed = True
             self._unbind_keys()
 
     def _on_key(self, key: str) -> None:
+        """Route an arrow keypress to the appropriate handler for the current state."""
         if self._state == _STATE_PROMPT and key == "Down":
             self._reveal_answer()
         elif self._state == _STATE_ANSWER:
@@ -232,6 +261,7 @@ class PracticeScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _set_state(self, state: str) -> None:
+        """Update the visible widgets and hint bar to reflect the new state."""
         self._state = state
 
         if state == _STATE_LOADING:
@@ -273,6 +303,7 @@ class PracticeScreen(ctk.CTkFrame):
         self._update_stats()
 
     def _update_stats(self) -> None:
+        """Refresh the "Answered N • Remaining M" counter in the header."""
         if self._state == _STATE_LOADING:
             self._stats_var.set("")
             return
@@ -289,6 +320,7 @@ class PracticeScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _show_current(self) -> None:
+        """Render the card at ``_idx``, or transition to the done state when exhausted."""
         if self._idx >= len(self._items):
             self._set_state(_STATE_DONE)
             return
@@ -314,6 +346,7 @@ class PracticeScreen(ctk.CTkFrame):
         self._set_state(_STATE_PROMPT)
 
     def _reveal_answer(self) -> None:
+        """Reveal the translation for the current card (PROMPT → ANSWER)."""
         if self._current is not None:
             if self._current["direction"] is Direction.FORWARD:
                 self._answer_var.set(self._current["target_text"])
@@ -322,6 +355,7 @@ class PracticeScreen(ctk.CTkFrame):
         self._set_state(_STATE_ANSWER)
 
     def _submit_answer(self, remembered: bool) -> None:
+        """Record the result on a background thread (ANSWER → SAVING)."""
         if self._current is None:
             return
         item = self._current
@@ -336,6 +370,7 @@ class PracticeScreen(ctk.CTkFrame):
     def _on_answered(
         self, item: dict, practiced_at: int, next_ts: int | None
     ) -> None:
+        """Process the worker's reply: update stats, show the result, and maybe re-queue."""
         self._answered_count += 1
 
         # Update local item state so a re-queue shows the most recent practice
@@ -357,6 +392,7 @@ class PracticeScreen(ctk.CTkFrame):
         self._set_state(_STATE_RESULT)
 
     def _advance(self) -> None:
+        """Move on to the next card (RESULT → PROMPT or DONE)."""
         self._show_current()
 
     # ------------------------------------------------------------------
@@ -364,9 +400,16 @@ class PracticeScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _start_init_worker(self) -> None:
+        """Spawn the background thread that loads the predictor and builds the queue."""
         threading.Thread(target=self._init_worker, daemon=True).start()
 
     def _init_worker(self) -> None:
+        """Background: load the trained model (if any) and build the review/new queues.
+
+        Builds two lists in the worker, shuffles each independently, and
+        sends ``review + new`` back so review cards are always shown before
+        brand-new words.
+        """
         try:
             model_path = (
                 Path(__file__).parent.parent.parent
@@ -414,6 +457,11 @@ class PracticeScreen(ctk.CTkFrame):
             self._queue.put(("error", str(exc)))
 
     def _answer_worker(self, item: dict, remembered: bool) -> None:
+        """Background: record the repetition and recompute this direction's next-due time.
+
+        Falls back to ``next_ts = None`` (and skips the DB update of
+        ``next_rep_*_at``) when no model has been trained yet.
+        """
         try:
             practiced_at = int(time.time())
             direction: Direction = item["direction"]
@@ -455,6 +503,7 @@ class PracticeScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _poll(self) -> None:
+        """Drain worker events from the queue, dispatching to the right handler."""
         if self._destroyed:
             return
         try:
@@ -490,6 +539,7 @@ class PracticeScreen(ctk.CTkFrame):
             self.after(_POLL_MS, self._poll)
 
     def _show_error(self, msg: str) -> None:
+        """Pop up an error dialog and bounce back to the word list."""
         messagebox.showerror("Practice error", msg, parent=self)
         self._app.back_to_word_list()
 
@@ -498,5 +548,6 @@ class PracticeScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _go_back(self) -> None:
+        """Detach key bindings and return to the word list."""
         self._unbind_keys()
         self._app.back_to_word_list()

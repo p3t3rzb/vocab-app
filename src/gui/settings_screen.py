@@ -1,3 +1,10 @@
+"""Global settings screen.
+
+Shows the user-configurable :class:`AppSettings` fields and, on Save, triggers
+a per-database schedule recalculation whenever a setting that affects
+scheduling has changed. Appearance changes preview live (so the user can see
+the new mode immediately) and revert if Back is pressed without saving.
+"""
 from __future__ import annotations
 
 import queue
@@ -22,7 +29,12 @@ _APPEARANCE_OPTIONS = ("Light", "Dark", "System")
 
 
 def _iter_recalc_targets() -> list[tuple[Path, Path, str, str, int]]:
-    """Return (db_path, ckpt_path, src, tgt, word_count) for every DB that has a trained model."""
+    """Return ``(db_path, ckpt_path, src, tgt, word_count)`` for every DB that has a trained model.
+
+    Used to enumerate which databases the Save handler needs to recompute
+    schedules for. Databases without a matching ``.pt`` checkpoint are
+    skipped — the next training run will pick up the new settings.
+    """
     if not STORAGE_DIR.exists():
         return []
     targets: list[tuple[Path, Path, str, str, int]] = []
@@ -47,6 +59,8 @@ def _iter_recalc_targets() -> list[tuple[Path, Path, str, str, int]]:
 
 
 class SettingsScreen(ctk.CTkFrame):
+    """Edit :class:`AppSettings` and, on Save, recompute schedules across every DB."""
+
     _POLL_MS = 100
 
     def __init__(self, master: "App") -> None:
@@ -67,6 +81,7 @@ class SettingsScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
+        """Construct every section of the form, plus the status/progress and buttons."""
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
@@ -222,9 +237,11 @@ class SettingsScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _on_threshold_change(self, value: float) -> None:
+        """Update the numeric label next to the threshold slider as it drags."""
         self._threshold_label_var.set(f"{float(value):.2f}")
 
     def _on_appearance_change(self) -> None:
+        """Live-preview the new appearance mode without persisting it."""
         ctk.set_appearance_mode(self._appearance_var.get())
 
     # ------------------------------------------------------------------
@@ -232,6 +249,7 @@ class SettingsScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _read_form(self) -> AppSettings | None:
+        """Parse and validate the form, returning a new :class:`AppSettings` or ``None``."""
         try:
             days = int(self._max_days_var.get().strip())
         except ValueError:
@@ -255,6 +273,7 @@ class SettingsScreen(ctk.CTkFrame):
         )
 
     def _on_save(self) -> None:
+        """Persist the form, then either navigate home or start a schedule recalc."""
         new = self._read_form()
         if new is None:
             return
@@ -288,6 +307,7 @@ class SettingsScreen(ctk.CTkFrame):
         new_settings: AppSettings,
         targets: list[tuple[Path, Path, str, str, int]],
     ) -> None:
+        """Disable the form and spawn the worker that recalculates schedules per DB."""
         self._recalculating = True
         self._stop_event.clear()
         self._initial = replace(new_settings)  # so re-saving without changes is a no-op
@@ -316,6 +336,7 @@ class SettingsScreen(ctk.CTkFrame):
         new_settings: AppSettings,
         targets: list[tuple[Path, Path, str, str, int]],
     ) -> None:
+        """Background: iterate over the target DBs and run :func:`compute_all_schedules` on each."""
         try:
             from src.database import init_db
             from src.model.schedule import compute_all_schedules
@@ -347,6 +368,7 @@ class SettingsScreen(ctk.CTkFrame):
             self._queue.put(("recalc_error", str(exc)))
 
     def _poll(self) -> None:
+        """Drain recalc events and reschedule until the worker finishes."""
         try:
             while True:
                 item = self._queue.get_nowait()
@@ -380,6 +402,7 @@ class SettingsScreen(ctk.CTkFrame):
             self.after(self._POLL_MS, self._poll)
 
     def _on_recalc_finished(self, message: str, is_error: bool = False) -> None:
+        """Re-enable the form and either show an error dialog or return home."""
         self._recalculating = False
         self._progress.set(1.0 if not is_error else 0)
         self._status_var.set(message)
@@ -395,12 +418,14 @@ class SettingsScreen(ctk.CTkFrame):
             self._app.show_db_select()
 
     def _cancel_recalc(self) -> None:
+        """Signal the recalc worker to stop after the current DB finishes."""
         if self._recalculating:
             self._stop_event.set()
             self._btn_cancel_recalc.configure(state="disabled")
             self._status_var.set("Cancelling…")
 
     def _go_back(self) -> None:
+        """Return to the home screen, reverting any unsaved appearance preview."""
         if self._recalculating:
             return
         # If user toggled appearance for preview but never saved, revert.

@@ -1,3 +1,10 @@
+"""Engine setup and session management.
+
+The engine is process-global so that :func:`get_session` can be called from
+anywhere without threading the engine through every call site. Re-calling
+:func:`init_db` with a different URL replaces the active engine, which is how
+the GUI switches between language-pair databases.
+"""
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -20,6 +27,16 @@ def init_db(
 
     Must be called once at application startup before any repository use.
     Calling it again with a different URL replaces the active engine.
+
+    Also performs an idempotent migration: if an older database is missing
+    the per-direction ``next_rep_fwd_at`` / ``next_rep_rev_at`` columns, they
+    are added via ``ALTER TABLE``.
+
+    Args:
+        database_url: SQLAlchemy URL such as ``sqlite:///storage/french_polish.db``.
+        source_language: Human-readable name (e.g. ``"French"``) — used only
+            when seeding a brand-new database.
+        target_language: Same, for the target language (e.g. ``"Polish"``).
     """
     global _engine, _SessionFactory
 
@@ -52,10 +69,18 @@ def init_db(
 def get_session() -> Generator[Session, None, None]:
     """Yield a SQLAlchemy Session, committing on clean exit and rolling back on exception.
 
-    Usage:
+    The session uses ``expire_on_commit=False`` so ORM objects remain readable
+    after the ``with`` block ends — important for the GUI which holds word
+    and repetition objects across screen redraws.
+
+    Usage::
+
         with get_session() as session:
             repo = WordRepository(session)
             word = repo.get_by_id(42)
+
+    Raises:
+        RuntimeError: if :func:`init_db` has not been called yet.
     """
     if _SessionFactory is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
