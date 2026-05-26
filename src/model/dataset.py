@@ -10,14 +10,16 @@ events are turned into timesteps:
 The train/val split is done at the **word** level (not the sequence level)
 so a word never leaks across the split.
 """
+from __future__ import annotations
+
 import math
 import random
 from dataclasses import dataclass
 
 import torch
-from torch.utils.data import Dataset
 
-from src.database import Direction, RepetitionRepository, WordRepository, get_session, init_db
+from src.database import Direction, RepetitionRepository, WordRepository, get_session
+from src.database.models import Repetition, Word
 
 
 @dataclass
@@ -41,14 +43,41 @@ class Sequence:
     inputs: torch.Tensor   # (L, 2)  [log_delta, prev_remembered]
     targets: torch.Tensor  # (L,)    remembered at each step
 
+    @classmethod
+    def from_repetitions(
+        cls,
+        word: Word,
+        direction: Direction,
+        reps: list[Repetition],
+    ) -> Sequence | None:
+        """Build a sequence from a rep history; return ``None`` if too short."""
+        if len(reps) < 2:
+            return None
 
-def build_sequences(db_url: str) -> list[Sequence]:
-    """Load all qualifying (word, direction) sequences from the database.
+        inputs: list[list[float]] = []
+        targets: list[float] = []
+        for i in range(1, len(reps)):
+            delta = reps[i].practiced_at - reps[i - 1].practiced_at
+            inputs.append([math.log(delta + 1), float(reps[i - 1].remembered)])
+            targets.append(float(reps[i].remembered))
 
-    Calls :func:`init_db` (idempotently) and returns one :class:`Sequence`
-    per (word, direction) pair that has at least two practice events.
+        return cls(
+            word_id=word.id,
+            direction=direction,
+            source_text=word.source_text,
+            target_text=word.target_text,
+            inputs=torch.tensor(inputs, dtype=torch.float32),
+            targets=torch.tensor(targets, dtype=torch.float32),
+        )
+
+
+def build_sequences() -> list[Sequence]:
+    """Load all qualifying (word, direction) sequences from the active database.
+
+    The caller is responsible for having initialized the DB via
+    :func:`src.database.init_db`. Returns one :class:`Sequence` per
+    (word, direction) pair that has at least two practice events.
     """
-    init_db(db_url, "", "")
     sequences: list[Sequence] = []
 
     with get_session() as session:
@@ -58,33 +87,17 @@ def build_sequences(db_url: str) -> list[Sequence]:
         for word in words:
             for direction in Direction:
                 reps = reps_repo.get_for_word(word.id, direction)
-                if len(reps) < 2:
-                    continue
-
-                inputs, targets = [], []
-                for i in range(1, len(reps)):
-                    delta = reps[i].practiced_at - reps[i - 1].practiced_at
-                    log_delta = math.log(delta + 1)
-                    prev_rem = float(reps[i - 1].remembered)
-                    inputs.append([log_delta, prev_rem])
-                    targets.append(float(reps[i].remembered))
-
-                sequences.append(Sequence(
-                    word_id=word.id,
-                    direction=direction,
-                    source_text=word.source_text,
-                    target_text=word.target_text,
-                    inputs=torch.tensor(inputs, dtype=torch.float32),
-                    targets=torch.tensor(targets, dtype=torch.float32),
-                ))
+                seq = Sequence.from_repetitions(word, direction, reps)
+                if seq is not None:
+                    sequences.append(seq)
 
     return sequences
 
 
 def split_sequences(
     sequences: list[Sequence],
-    val_split: float = 0.2,
-    seed: int = 42,
+    val_split: float,
+    seed: int,
 ) -> tuple[list[Sequence], list[Sequence]]:
     """Split sequences into ``(train, val)`` at the word level.
 
@@ -101,39 +114,3 @@ def split_sequences(
     train = [s for s in sequences if s.word_id not in val_words]
     val = [s for s in sequences if s.word_id in val_words]
     return train, val
-
-
-class RecallDataset(Dataset):
-    """Thin :class:`~torch.utils.data.Dataset` wrapper around a list of sequences."""
-
-    def __init__(self, sequences: list[Sequence]):
-        self.sequences = sequences
-
-    def __len__(self) -> int:
-        return len(self.sequences)
-
-    def __getitem__(self, idx: int) -> Sequence:
-        return self.sequences[idx]
-
-
-def collate_fn(batch: list[Sequence]) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pad sequences in a batch to equal length.
-
-    Returns:
-        A tuple ``(inputs, targets, lengths)`` where ``inputs`` has shape
-        ``(B, max_len, 2)``, ``targets`` has shape ``(B, max_len)``, and
-        ``lengths`` records the true (unpadded) length of each sequence
-        so the loss can mask out padding positions.
-    """
-    lengths = torch.tensor([len(s.inputs) for s in batch], dtype=torch.long)
-    max_len = int(lengths.max().item())
-
-    inputs = torch.zeros(len(batch), max_len, 2)
-    targets = torch.zeros(len(batch), max_len)
-
-    for i, s in enumerate(batch):
-        L = len(s.inputs)
-        inputs[i, :L] = s.inputs
-        targets[i, :L] = s.targets
-
-    return inputs, targets, lengths

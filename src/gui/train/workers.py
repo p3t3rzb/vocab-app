@@ -1,8 +1,8 @@
 """Background workers for the training screen.
 
-``training_worker`` runs :func:`src.model.train.train`, pushing per-epoch
+``training_worker`` runs :func:`src.model.train`, pushing per-epoch
 events and a final ``"done"`` (or ``"cancelled"`` / ``"error"``).
-``schedule_worker`` runs :func:`src.model.schedule.compute_all_schedules`
+``schedule_worker`` runs :func:`src.model.compute_all_schedules`
 on a single database, pushing chunk-progress events.
 """
 from __future__ import annotations
@@ -11,9 +11,9 @@ import queue as queue_module
 import threading
 from pathlib import Path
 
+from src.model import compute_all_schedules
+from src.model import train as run_training
 from src.model.config import TrainConfig
-from src.model.schedule import compute_all_schedules
-from src.model.train import train as run_training
 from src.settings import load_settings
 
 

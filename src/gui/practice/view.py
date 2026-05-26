@@ -24,7 +24,7 @@ from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
 
 if TYPE_CHECKING:
-    from src.model.predictor import Predictor
+    from src.model import Predictor
 
     from ..app import App
 

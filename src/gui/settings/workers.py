@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.database import init_db
-from src.model.schedule import compute_all_schedules
+from src.model import compute_all_schedules
 from src.settings import AppSettings
 
 from ..theme import Paths

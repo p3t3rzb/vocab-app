@@ -20,7 +20,7 @@ TK_LIBRARY="$HOME/.local/share/uv/python/cpython-3.13.5-macos-aarch64-none/lib/t
 uv run python -m src.main
 
 # Train the recall model
-uv run python -m src.model.train --db storage/french.db --epochs 50
+uv run python -m src.model --db storage/french.db --epochs 50
 ```
 
 ## Project layout
@@ -46,10 +46,14 @@ src/
     train/             — model training screen (view, loss plot, workers)
     settings/          — global settings screen (view, form, recalc workers)
   model/           — LSTM recall predictor
-    config.py      — TrainConfig dataclass (single source of hyperparameter defaults)
+    __main__.py    — `python -m src.model` training CLI
+    config.py      — TrainConfig / PredictConfig / ScheduleConfig dataclasses
+    device.py      — torch device selection (MPS → CUDA → CPU)
+    checkpoint.py  — save_checkpoint, load_model
     lstm.py        — RecallLSTM architecture
     dataset.py     — DB → training sequences pipeline
-    train.py       — training loop + CLI
+    inference/     — Predictor, BatchScheduler, ThresholdSearch, PolynomialRefiner
+    training/      — Trainer class, masked BCE loss, bucket batching
 storage/
   french_polish.db — 8,790 French↔Polish words, 255,455 repetition events
   settings.json    — user-configurable global settings (created on first save)

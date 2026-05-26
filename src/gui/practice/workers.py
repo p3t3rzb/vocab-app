@@ -16,8 +16,7 @@ from src.database import (
     WordRepository,
     get_session,
 )
-from src.model import load_model
-from src.model.predictor import Predictor
+from src.model import Predictor, load_model
 from src.settings import load_settings
 
 from ..db_context import DbContext

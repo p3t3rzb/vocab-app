@@ -1,18 +1,29 @@
 """LSTM-based recall predictor and spaced-repetition scheduler.
 
-Re-exports the main entry points from the submodules:
+Public surface:
 
-* :class:`TrainConfig`, :class:`PredictConfig` — hyperparameter dataclasses.
-* :class:`Sequence`, :func:`build_sequences`, :func:`split_sequences` — data
-  pipeline that turns repetition history into LSTM training sequences.
-* :class:`RecallLSTM` — the network itself.
-* :class:`Predictor` — wraps a trained model to expose
-  ``recall_probability`` and ``next_repetition_delta``.
-* :func:`train`, :func:`load_model` — training entry point and checkpoint
-  loader.
+* :class:`TrainConfig`, :class:`PredictConfig`, :class:`ScheduleConfig` —
+  hyperparameter dataclasses.
+* :class:`RecallLSTM` — the network.
+* :func:`load_model` — load a saved checkpoint.
+* :class:`Predictor` — per-word recall probability and next-review estimates.
+* :class:`Trainer`, :func:`train` — training entry points.
+* :func:`compute_all_schedules` — batched re-scheduling of every word.
 """
-from src.model.config import PredictConfig, TrainConfig
-from src.model.dataset import Sequence, build_sequences, split_sequences
+from src.model.checkpoint import load_model
+from src.model.config import PredictConfig, ScheduleConfig, TrainConfig
+from src.model.inference import Predictor, compute_all_schedules
 from src.model.lstm import RecallLSTM
-from src.model.predictor import Predictor
-from src.model.train import load_model, train
+from src.model.training import Trainer, train
+
+__all__ = [
+    "PredictConfig",
+    "ScheduleConfig",
+    "TrainConfig",
+    "RecallLSTM",
+    "load_model",
+    "Predictor",
+    "Trainer",
+    "train",
+    "compute_all_schedules",
+]

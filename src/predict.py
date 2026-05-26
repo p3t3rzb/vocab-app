@@ -131,7 +131,7 @@ def main() -> None:
         ckpt_path = Path("storage") / "models" / f"{source_lang.lower()}_{target_lang.lower()}.pt"
         if not ckpt_path.exists():
             print(f"Error: no model checkpoint found at {ckpt_path}")
-            print("Run 'uv run python -m src.model.train --db <db>' to train first.")
+            print("Run 'uv run python -m src.model --db <db>' to train first.")
             return
 
         words_repo = WordRepository(session)
