@@ -21,14 +21,11 @@ from src.database import Direction, get_session
 from src.database.models import Repetition, Word
 from src.model.config import PredictConfig
 from src.model.lstm import RecallLSTM
-from src.model.predictor import Predictor, _poly_threshold_crossing
+from src.model.predictor import Predictor, poly_threshold_crossing
 from src.model.train import load_model
 
 # Number of words processed in each batched chunk.
 # Controls the trade-off between memory footprint and GPU dispatch overhead.
-# At 256 words → up to 512 LSTM tasks, padded to max_seq_len:
-#   input  ≈ 512 × 238 × 2 × 4 B ≈ 1 MB
-#   output ≈ 512 × 238 × 64 × 4 B ≈ 31 MB  — well within any device budget.
 _CHUNK_SIZE = 256
 
 
@@ -70,7 +67,7 @@ def _make_base_seq(reps: list[Repetition]) -> list[list[float]]:
     base: list[list[float]] = []
     for i in range(1, len(reps)):
         dt = reps[i].practiced_at - reps[i - 1].practiced_at
-        base.append([math.log(max(dt, 0) + 1), float(reps[i - 1].remembered)])
+        base.append([math.log(dt + 1), float(reps[i - 1].remembered)])
     return base
 
 
@@ -202,7 +199,7 @@ def _process_chunk(
     # Step 3: polynomial refinement for bisect tasks
     for task in bisect:
         binary_result = task["hi"]
-        poly_result = _poly_threshold_crossing(
+        poly_result = poly_threshold_crossing(
             task["points"], threshold, cfg.poly_degree, math.log(binary_result + 1)
         )
         if poly_result is None or poly_result <= 0 or not math.isfinite(poly_result):
@@ -245,7 +242,7 @@ def compute_all_schedules(
         on_progress: Optional callback invoked as ``on_progress(words_done,
             total_words)`` after each chunk completes.
         stop_event: Optional :class:`threading.Event` for cancellation.
-            When set, the function returns without writing any pending updates.
+            Checked between chunks; already-committed chunks are preserved.
         cfg: Override the default :class:`PredictConfig` (e.g. with the
             user-configured recall threshold).
     """
@@ -269,29 +266,26 @@ def compute_all_schedules(
         reps_map[(rep.word_id, rep.direction)].append(rep)
 
     total = len(all_words)
-    word_updates: dict[int, tuple[int | None, int | None]] = {}
 
     for chunk_start in range(0, total, _CHUNK_SIZE):
         if stop_event and stop_event.is_set():
             return
 
         chunk = all_words[chunk_start : chunk_start + _CHUNK_SIZE]
-        word_updates.update(_process_chunk(chunk, reps_map, model, cfg, device))
+        chunk_updates = _process_chunk(chunk, reps_map, model, cfg, device)
+
+        if chunk_updates:
+            with get_session() as session:
+                for word_id, (fwd_ts, rev_ts) in chunk_updates.items():
+                    vals: dict[str, int] = {}
+                    if fwd_ts is not None:
+                        vals["next_rep_fwd_at"] = fwd_ts
+                    if rev_ts is not None:
+                        vals["next_rep_rev_at"] = rev_ts
+                    if vals:
+                        session.execute(
+                            sa_update(Word).where(Word.id == word_id).values(**vals)
+                        )
 
         if on_progress:
             on_progress(min(chunk_start + _CHUNK_SIZE, total), total)
-
-    if stop_event and stop_event.is_set():
-        return
-
-    with get_session() as session:
-        for word_id, (fwd_ts, rev_ts) in word_updates.items():
-            vals: dict[str, int] = {}
-            if fwd_ts is not None:
-                vals["next_rep_fwd_at"] = fwd_ts
-            if rev_ts is not None:
-                vals["next_rep_rev_at"] = rev_ts
-            if vals:
-                session.execute(
-                    sa_update(Word).where(Word.id == word_id).values(**vals)
-                )

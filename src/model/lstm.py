@@ -15,7 +15,7 @@ class RecallLSTM(nn.Module):
     previous attempt was successful.
     """
 
-    def __init__(self, hidden_size: int = 64, num_layers: int = 2, dropout: float = 0.2):
+    def __init__(self, hidden_size: int = 16, num_layers: int = 2, dropout: float = 0.2):
         """Build the network.
 
         Args:

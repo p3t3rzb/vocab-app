@@ -64,7 +64,7 @@ def build_sequences(db_url: str) -> list[Sequence]:
                 inputs, targets = [], []
                 for i in range(1, len(reps)):
                     delta = reps[i].practiced_at - reps[i - 1].practiced_at
-                    log_delta = math.log(max(delta, 0) + 1)
+                    log_delta = math.log(delta + 1)
                     prev_rem = float(reps[i - 1].remembered)
                     inputs.append([log_delta, prev_rem])
                     targets.append(float(reps[i].remembered))

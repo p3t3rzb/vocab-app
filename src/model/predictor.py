@@ -16,7 +16,7 @@ from src.model.config import PredictConfig
 from src.model.lstm import RecallLSTM
 
 
-def _poly_threshold_crossing(
+def poly_threshold_crossing(
     points: list[tuple[float, float]],
     threshold: float,
     degree: int,
@@ -100,7 +100,7 @@ class Predictor:
 
         for i in range(1, len(reps)):
             dt = reps[i].practiced_at - reps[i - 1].practiced_at
-            inputs.append([math.log(max(dt, 0) + 1), float(reps[i - 1].remembered)])
+            inputs.append([math.log(dt + 1), float(reps[i - 1].remembered)])
 
         inputs.append([math.log(delta_seconds + 1), float(reps[-1].remembered)])
 
@@ -163,7 +163,7 @@ class Predictor:
         binary_result = hi
 
         # Fit polynomial in log(delta+1) space and solve for threshold crossing
-        poly_result = _poly_threshold_crossing(
+        poly_result = poly_threshold_crossing(
             points,
             threshold,
             cfg.poly_degree,

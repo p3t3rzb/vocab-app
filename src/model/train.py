@@ -40,7 +40,7 @@ def _preload(sequences: list[Sequence], device: torch.device) -> tuple[torch.Ten
     """Pad every sequence to the global max length and move the whole set to ``device``.
 
     Doing this once up front avoids per-batch host→device copies during
-    training. The full dataset is small (~2 MB) so memory is not a concern.
+    training. The padded dataset is small (tens of MB) so memory is not a concern.
     """
     lengths = [len(s.inputs) for s in sequences]
     max_L = max(lengths)
@@ -240,7 +240,7 @@ def load_model(checkpoint_path: str | Path, device: torch.device | None = None) 
     """
     if device is None:
         device = _get_device()
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
     model = RecallLSTM(**ckpt["hyperparams"]).to(device)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
