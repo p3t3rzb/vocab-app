@@ -1,6 +1,7 @@
 """CLI entry point for training: ``uv run python -m src.model --db <path>``."""
 import argparse
 
+from src.database import init_db
 from src.model.config import TrainConfig
 from src.model.training import train
 
@@ -22,6 +23,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    """Initialise the requested database and kick off training."""
     args = _parse_args()
     db_url = f"sqlite:///{args.db}" if not args.db.startswith("sqlite") else args.db
     cfg = TrainConfig(
@@ -34,7 +36,8 @@ def main() -> None:
         val_split=args.val_split,
         seed=args.seed,
     )
-    train(db_url=db_url, config=cfg)
+    init_db(db_url, "", "")
+    train(config=cfg)
 
 
 if __name__ == "__main__":

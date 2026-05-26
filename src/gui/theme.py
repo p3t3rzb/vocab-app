@@ -10,7 +10,7 @@ The font kwargs are stored as plain dicts so they can be passed to
 """
 from __future__ import annotations
 
-from pathlib import Path
+from src import paths as _paths
 
 
 class Fonts:
@@ -114,11 +114,13 @@ class Hints:
 
 
 class Paths:
-    """On-disk locations used by GUI screens."""
+    """On-disk locations used by GUI screens.
 
-    STORAGE_DIR = Path(__file__).parent.parent.parent / "storage"
-    MODELS_DIR = STORAGE_DIR / "models"
+    Thin re-export shim over :mod:`src.paths` so the GUI keeps a single
+    import (``from .theme import Paths``) and the canonical layout lives
+    project-wide in :mod:`src.paths`.
+    """
 
-    @staticmethod
-    def model_path(src_lang: str, tgt_lang: str) -> Path:
-        return Paths.MODELS_DIR / f"{src_lang.lower()}_{tgt_lang.lower()}.pt"
+    STORAGE_DIR = _paths.STORAGE_DIR
+    MODELS_DIR = _paths.MODELS_DIR
+    model_path = staticmethod(_paths.model_path)

@@ -10,7 +10,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from src.database import LanguagePairRepository, get_session, init_db
+from src.database import LanguagePairRepository, get_session
 from src.model.checkpoint import save_checkpoint
 from src.model.config import TrainConfig
 from src.model.dataset import Sequence, build_sequences, split_sequences
@@ -25,8 +25,7 @@ EpochCallback = Callable[[int, float, float], None]
 class Trainer:
     """Encapsulates one training run: data prep, model, optimizer, epoch loop."""
 
-    def __init__(self, db_url: str, config: TrainConfig) -> None:
-        self._db_url = db_url
+    def __init__(self, config: TrainConfig) -> None:
         self._cfg = config
         self._device = get_device()
 
@@ -37,6 +36,10 @@ class Trainer:
     ) -> Path:
         """Train and return the path of the best checkpoint.
 
+        Callers must call :func:`src.database.init_db` before invoking this
+        method — the trainer reads sequences via :func:`get_session` and
+        does not initialise the engine itself.
+
         The best checkpoint (lowest validation loss seen so far) is saved
         every time validation loss improves, so cancelling mid-training still
         leaves a usable model on disk.
@@ -46,9 +49,6 @@ class Trainer:
         random.seed(cfg.seed)
 
         print(f"Device: {self._device}")
-
-        # The Trainer owns DB init; build_sequences relies on an active session.
-        init_db(self._db_url, "", "")
 
         print("Loading sequences from database…")
         all_seqs = build_sequences()
@@ -68,7 +68,9 @@ class Trainer:
             dropout=cfg.dropout,
         ).to(self._device)
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=5, factor=0.5)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, patience=cfg.lr_patience, factor=cfg.lr_factor,
+        )
 
         ckpt_path = cfg.checkpoint_dir / f"{pair_name}.pt"
         best_val = math.inf
@@ -164,7 +166,9 @@ class Trainer:
                 if training:
                     optimizer.zero_grad()
                     loss.backward()
-                    nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    nn.utils.clip_grad_norm_(
+                        model.parameters(), max_norm=self._cfg.grad_clip_max_norm,
+                    )
                     optimizer.step()
 
                 total_loss += loss.item()
@@ -174,10 +178,13 @@ class Trainer:
 
 
 def train(
-    db_url: str,
     config: TrainConfig | None = None,
     on_epoch: EpochCallback | None = None,
     stop_event: threading.Event | None = None,
 ) -> Path:
-    """Module-level convenience wrapper around :class:`Trainer`."""
-    return Trainer(db_url, config or TrainConfig()).run(on_epoch=on_epoch, stop_event=stop_event)
+    """Module-level convenience wrapper around :class:`Trainer`.
+
+    The active database (set via :func:`src.database.init_db`) is read by
+    the trainer; this function does not take a ``db_url`` itself.
+    """
+    return Trainer(config or TrainConfig()).run(on_epoch=on_epoch, stop_event=stop_event)

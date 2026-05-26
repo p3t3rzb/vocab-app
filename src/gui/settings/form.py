@@ -10,8 +10,8 @@ The view never touches Tk variables directly — it only calls
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from tkinter import messagebox
-from typing import Iterable
 
 import customtkinter as ctk
 
@@ -31,7 +31,7 @@ class SettingsForm:
         parent: ctk.CTkBaseClass,
         *,
         initial: AppSettings,
-        on_appearance_change: callable,
+        on_appearance_change: Callable[[str], None],
     ) -> None:
         self._parent = parent
         self._initial = initial
@@ -179,7 +179,3 @@ class SettingsForm:
         state = "normal" if enabled else "disabled"
         self._threshold_slider.configure(state=state)
         self._max_days_entry.configure(state=state)
-
-    def editable_widgets(self) -> Iterable[ctk.CTkBaseClass]:
-        """Iterable of editable widgets — useful when callers need to toggle state."""
-        return (self._threshold_slider, self._max_days_entry)

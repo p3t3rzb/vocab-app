@@ -6,19 +6,17 @@ dialog and the navigation entry point to the global settings screen.
 """
 from __future__ import annotations
 
-import re
-import sqlite3
-from datetime import datetime
 from pathlib import Path
+from tkinter import messagebox
 from typing import TYPE_CHECKING
 
 import customtkinter as ctk
-from tkinter import messagebox
 
-from src.database import init_db
+from src.database import count_words, init_db, read_language_pair
 
 from .base_screen import BaseScreen
 from .db_context import DbContext
+from .db_select_util import DbEntry, last_trained_label, safe_db_basename, slugify
 from .dialogs import BaseDialog
 from .theme import Fonts, Paths, WindowSizes
 from .widgets import ColumnSpec, apply_treeview_style, build_tree
@@ -26,56 +24,12 @@ from .widgets import ColumnSpec, apply_treeview_style, build_tree
 if TYPE_CHECKING:
     from .app import App
 
-STORAGE_DIR = Paths.STORAGE_DIR
-
-
-_NON_ALPHANUM_RE = re.compile(r"[^a-z0-9]+")
-
-
-def _slugify(value: str) -> str:
-    """Lowercase, collapse runs of non-alphanumeric chars to ``_``, trim."""
-    return _NON_ALPHANUM_RE.sub("_", value.lower()).strip("_")
-
-
-def _safe_db_basename(src: str, tgt: str) -> str:
-    """Build a filesystem-safe ``<src>_<tgt>`` basename (no extension).
-
-    Returns the empty string if either side sanitises to nothing — this is
-    also a safety check, since path separators and ``..`` cannot survive
-    ``_slugify`` and so the result cannot escape ``storage/``.
-    """
-    src_c, tgt_c = _slugify(src), _slugify(tgt)
-    if not src_c or not tgt_c:
-        return ""
-    return f"{src_c}_{tgt_c}"
-
-
-def _read_language_pair(db_path: Path) -> tuple[str, str] | None:
-    """Return ``(source_language, target_language)`` for ``db_path``, or ``None`` on failure.
-
-    Uses raw sqlite3 (not SQLAlchemy) so we can peek at every database in
-    ``storage/`` without re-initialising the global engine each time.
-    """
-    try:
-        con = sqlite3.connect(str(db_path))
-    except Exception:
-        return None
-    try:
-        row = con.execute(
-            "SELECT source_language, target_language FROM language_pair LIMIT 1"
-        ).fetchone()
-    except Exception:
-        return None
-    finally:
-        con.close()
-    return (row[0], row[1]) if row else None
-
 
 class DatabaseSelectScreen(BaseScreen):
     """Lists every database in ``storage/`` and lets the user open or create one."""
 
     def __init__(self, master: App) -> None:
-        self._db_entries: list[tuple[Path, str, str]] = []
+        self._db_entries: list[DbEntry] = []
         super().__init__(master)
         self._load_databases()
 
@@ -124,17 +78,17 @@ class DatabaseSelectScreen(BaseScreen):
         self._tree.delete(*self._tree.get_children())
         self._db_entries.clear()
 
-        if not STORAGE_DIR.exists():
+        if not Paths.STORAGE_DIR.exists():
             return
 
-        for db_path in sorted(STORAGE_DIR.glob("*.db")):
-            pair = _read_language_pair(db_path)
+        for db_path in sorted(Paths.STORAGE_DIR.glob("*.db")):
+            pair = read_language_pair(db_path)
             if pair is None:
                 continue
             src, tgt = pair
-            count = _word_count(db_path)
-            trained = _last_trained(src, tgt)
-            self._db_entries.append((db_path, src, tgt))
+            count = count_words(db_path)
+            trained = last_trained_label(src, tgt)
+            self._db_entries.append(DbEntry(db_path=db_path, src_lang=src, tgt_lang=tgt))
             self._tree.insert(
                 "",
                 "end",
@@ -157,8 +111,8 @@ class DatabaseSelectScreen(BaseScreen):
         if not sel:
             return
         idx = self._tree.index(sel[0])
-        db_path, src, tgt = self._db_entries[idx]
-        self._app.show_word_list(DbContext(db_path, src, tgt))
+        entry = self._db_entries[idx]
+        self._app.show_word_list(DbContext(entry.db_path, entry.src_lang, entry.tgt_lang))
 
 
 class NewDatabaseDialog(BaseDialog):
@@ -213,11 +167,11 @@ class NewDatabaseDialog(BaseDialog):
         """Refresh the read-only filename label whenever an entry changes."""
         src = self._src_entry.get().strip()
         tgt = self._tgt_entry.get().strip()
-        base = _safe_db_basename(src, tgt)
+        base = safe_db_basename(src, tgt)
         if base:
             self._filename_label.configure(text=f"{base}.db")
         elif src:
-            src_c = _slugify(src)
+            src_c = slugify(src)
             self._filename_label.configure(text=f"{src_c}_....db" if src_c else "")
         else:
             self._filename_label.configure(text="")
@@ -231,7 +185,7 @@ class NewDatabaseDialog(BaseDialog):
             messagebox.showwarning("Missing fields", "Both language fields must be filled in.", parent=self)
             return
 
-        base = _safe_db_basename(src_lang, tgt_lang)
+        base = safe_db_basename(src_lang, tgt_lang)
         if not base:
             messagebox.showwarning(
                 "Invalid name",
@@ -240,7 +194,7 @@ class NewDatabaseDialog(BaseDialog):
             )
             return
         filename = f"{base}.db"
-        db_path = STORAGE_DIR / filename
+        db_path = Paths.STORAGE_DIR / filename
 
         if db_path.exists():
             messagebox.showwarning(
@@ -251,7 +205,7 @@ class NewDatabaseDialog(BaseDialog):
             return
 
         try:
-            STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+            Paths.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
             init_db(f"sqlite:///{db_path}", src_lang, tgt_lang)
         except Exception as exc:
             messagebox.showerror("Creation failed", str(exc), parent=self)
@@ -261,26 +215,3 @@ class NewDatabaseDialog(BaseDialog):
         self.src_lang = src_lang
         self.tgt_lang = tgt_lang
         self.destroy()
-
-
-def _last_trained(src: str, tgt: str) -> str:
-    """Return the checkpoint mtime as a display string, or ``"—"`` if not trained."""
-    ckpt = Paths.model_path(src, tgt)
-    if not ckpt.exists():
-        return "—"
-    return datetime.fromtimestamp(ckpt.stat().st_mtime).strftime("%b %d, %Y  %H:%M")
-
-
-def _word_count(db_path: Path) -> int:
-    """Return ``COUNT(*)`` from the ``words`` table, or ``0`` on any error."""
-    try:
-        con = sqlite3.connect(str(db_path))
-    except Exception:
-        return 0
-    try:
-        row = con.execute("SELECT COUNT(*) FROM words").fetchone()
-    except Exception:
-        return 0
-    finally:
-        con.close()
-    return row[0] if row else 0

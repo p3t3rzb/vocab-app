@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, fields
-from pathlib import Path
 
 from src.model.config import PredictConfig
-
-SETTINGS_PATH = Path(__file__).parent.parent / "storage" / "settings.json"
+from src.paths import SETTINGS_FILE
 
 
 @dataclass
@@ -52,10 +50,10 @@ def load_settings() -> AppSettings:
     or contains invalid JSON. Unknown keys in the file are ignored so that
     older installations remain forward-compatible.
     """
-    if not SETTINGS_PATH.exists():
+    if not SETTINGS_FILE.exists():
         return AppSettings()
     try:
-        data = json.loads(SETTINGS_PATH.read_text())
+        data = json.loads(SETTINGS_FILE.read_text())
     except Exception:
         return AppSettings()
     allowed = {f.name for f in fields(AppSettings)}
@@ -68,5 +66,5 @@ def load_settings() -> AppSettings:
 
 def save_settings(s: AppSettings) -> None:
     """Write ``s`` to ``storage/settings.json``, creating parent dirs as needed."""
-    SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SETTINGS_PATH.write_text(json.dumps(asdict(s), indent=2))
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(asdict(s), indent=2))

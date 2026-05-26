@@ -31,9 +31,6 @@ class TrainScreen(BaseScreen):
     """Train a model, plot live loss curves, then auto-recalc all schedules."""
 
     def __init__(self, master: App) -> None:
-        self._training = False
-        self._computing_schedules = False
-
         super().__init__(master)
 
         self._plot = LossPlot(self._plot_label)
@@ -128,7 +125,7 @@ class TrainScreen(BaseScreen):
 
     def _start_training(self) -> None:
         """Validate inputs and start the training worker."""
-        if self._training:
+        if self._train_job.is_running:
             return
         try:
             epochs = int(self._epochs_var.get())
@@ -140,7 +137,6 @@ class TrainScreen(BaseScreen):
             )
             return
 
-        self._training = True
         self._plot.reset()
 
         self._btn_train.configure(state="disabled")
@@ -152,7 +148,12 @@ class TrainScreen(BaseScreen):
         cfg = TrainConfig(epochs=epochs)
         self._train_job.start(
             training_worker,
-            self._ctx.db_url, cfg, self._train_job.queue, self._train_job.stop_event,
+            self._ctx.db_url,
+            self._ctx.src_lang,
+            self._ctx.tgt_lang,
+            cfg,
+            self._train_job.queue,
+            self._train_job.stop_event,
         )
 
     # ------------------------------------------------------------------
@@ -168,8 +169,6 @@ class TrainScreen(BaseScreen):
 
     def _on_training_done(self, checkpoint_path: str) -> None:
         """Training finished — start the schedule recalc phase."""
-        self._training = False
-        self._computing_schedules = True
         self._progress.stop()
         self._progress.configure(mode="determinate")
         self._progress.set(0)
@@ -197,15 +196,12 @@ class TrainScreen(BaseScreen):
         self._status_var.set(f"Computing schedules… {done}/{total}")
 
     def _on_schedules_done(self) -> None:
-        self._computing_schedules = False
         self._reset_controls("Done — model trained and schedules updated.", success=True)
 
     def _on_schedules_cancelled(self) -> None:
-        self._computing_schedules = False
         self._reset_controls("Schedule computation cancelled.")
 
     def _on_schedules_error(self, msg: str) -> None:
-        self._computing_schedules = False
         self._reset_controls(f"Schedule error: {msg}", error_title="Schedule error")
 
     # ------------------------------------------------------------------
@@ -220,8 +216,6 @@ class TrainScreen(BaseScreen):
         success: bool = False,
     ) -> None:
         """Restore the controls to their idle state and show a status message."""
-        self._training = False
-        self._computing_schedules = False
         self._progress.stop()
         self._progress.configure(mode="indeterminate")
         self._progress.set(1.0 if success else 0)
@@ -234,11 +228,11 @@ class TrainScreen(BaseScreen):
 
     def _cancel_active_job(self) -> None:
         """Signal whichever job is running to stop."""
-        if self._training:
+        if self._train_job.is_running:
             self._train_job.stop()
             self._btn_cancel.configure(state="disabled")
             self._status_var.set("Cancelling… waiting for current epoch to finish.")
-        elif self._computing_schedules:
+        elif self._schedule_job.is_running:
             self._schedule_job.stop()
             self._btn_cancel.configure(state="disabled")
             self._status_var.set("Cancelling schedule computation…")
@@ -260,7 +254,7 @@ class TrainScreen(BaseScreen):
 
     def _go_back(self) -> None:
         """Navigate to the word list, confirming if work is in progress."""
-        if self._training:
+        if self._train_job.is_running:
             confirmed = messagebox.askyesno(
                 "Training in progress",
                 "Training is still running. Cancel it and go back?",
@@ -269,7 +263,7 @@ class TrainScreen(BaseScreen):
             if not confirmed:
                 return
             self._train_job.stop()
-        elif self._computing_schedules:
+        elif self._schedule_job.is_running:
             confirmed = messagebox.askyesno(
                 "Computing schedules",
                 "Schedule computation is running. Cancel it and go back?\n\n"
@@ -279,5 +273,4 @@ class TrainScreen(BaseScreen):
             if not confirmed:
                 return
             self._schedule_job.stop()
-            self._computing_schedules = False
         self._app.back_to_word_list()

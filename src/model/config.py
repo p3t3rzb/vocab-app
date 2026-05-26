@@ -25,6 +25,12 @@ class TrainConfig:
         seed: RNG seed for reproducible splits and weight initialisation.
         checkpoint_dir: Directory where ``<src>_<tgt>.pt`` checkpoints are
             written. Created automatically if missing.
+        lr_patience: Epochs of stagnant val loss before ``ReduceLROnPlateau``
+            cuts the learning rate.
+        lr_factor: Multiplicative factor applied to the learning rate when
+            ``ReduceLROnPlateau`` fires.
+        grad_clip_max_norm: Global gradient-norm cap applied before each
+            optimizer step (``torch.nn.utils.clip_grad_norm_``).
     """
 
     epochs: int = 100
@@ -36,6 +42,9 @@ class TrainConfig:
     val_split: float = 0.2
     seed: int = 42
     checkpoint_dir: Path = field(default_factory=lambda: Path("storage") / "models")
+    lr_patience: int = 5
+    lr_factor: float = 0.5
+    grad_clip_max_norm: float = 1.0
 
 
 @dataclass

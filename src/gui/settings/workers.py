@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import queue as queue_module
-import sqlite3
 import threading
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.database import init_db
+from src.database import count_words, init_db, read_language_pair
 from src.model import compute_all_schedules
 from src.settings import AppSettings
 
@@ -42,34 +41,22 @@ def iter_recalc_targets() -> list[RecalcTarget]:
 
     targets: list[RecalcTarget] = []
     for db_path in sorted(storage.glob("*.db")):
-        try:
-            con = sqlite3.connect(str(db_path))
-        except Exception:
+        pair = read_language_pair(db_path)
+        if pair is None:
             continue
-        try:
-            row = con.execute(
-                "SELECT source_language, target_language FROM language_pair LIMIT 1"
-            ).fetchone()
-            count_row = con.execute("SELECT COUNT(*) FROM words").fetchone()
-        except Exception:
-            continue
-        finally:
-            con.close()
-        if not row:
-            continue
-        src, tgt = row[0], row[1]
-        word_count = count_row[0] if count_row else 0
+        src, tgt = pair
         ckpt = Paths.model_path(src, tgt)
-        if ckpt.exists():
-            targets.append(
-                RecalcTarget(
-                    db_path=db_path,
-                    ckpt_path=ckpt,
-                    src_lang=src,
-                    tgt_lang=tgt,
-                    word_count=word_count,
-                )
+        if not ckpt.exists():
+            continue
+        targets.append(
+            RecalcTarget(
+                db_path=db_path,
+                ckpt_path=ckpt,
+                src_lang=src,
+                tgt_lang=tgt,
+                word_count=count_words(db_path),
             )
+        )
     return targets
 
 

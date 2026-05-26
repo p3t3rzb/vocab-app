@@ -33,7 +33,6 @@ class SettingsScreen(BaseScreen):
     def __init__(self, master: App) -> None:
         self._initial = load_settings()
         self._original_appearance = self._initial.appearance_mode
-        self._recalculating = False
 
         super().__init__(master)
 
@@ -153,7 +152,6 @@ class SettingsScreen(BaseScreen):
 
     def _start_recalc(self, new_settings: AppSettings, targets: list[RecalcTarget]) -> None:
         """Disable the form and start the recalc worker."""
-        self._recalculating = True
         self._initial = replace(new_settings)  # so re-saving without changes is a no-op
 
         self._btn_save.configure(state="disabled")
@@ -177,6 +175,7 @@ class SettingsScreen(BaseScreen):
     # ------------------------------------------------------------------
 
     def _on_progress(self, pair: str, done: int, total: int, idx: int, count: int) -> None:
+        """Update the progress bar: ``done/total`` words in DB ``idx`` of ``count``."""
         frac = done / total if total else 0.0
         self._progress.set(frac)
         self._status_var.set(f"Recalculating {pair} — {done}/{total}  (db {idx}/{count})")
@@ -184,7 +183,6 @@ class SettingsScreen(BaseScreen):
     def _on_finished(self, message: str, *, error_title: str | None = None) -> None:
         """Re-enable the form and either pop an error dialog or return home."""
         is_error = error_title is not None
-        self._recalculating = False
         self._progress.set(1.0 if not is_error else 0)
         self._status_var.set(message)
         self._btn_save.configure(state="normal")
@@ -199,7 +197,7 @@ class SettingsScreen(BaseScreen):
 
     def _cancel_recalc(self) -> None:
         """Signal the recalc worker to stop after the current DB finishes."""
-        if self._recalculating:
+        if self._recalc_job.is_running:
             self._recalc_job.stop()
             self._btn_cancel_recalc.configure(state="disabled")
             self._status_var.set("Cancelling…")
@@ -210,7 +208,7 @@ class SettingsScreen(BaseScreen):
 
     def _go_back(self) -> None:
         """Return to the home screen, reverting any unsaved appearance preview."""
-        if self._recalculating:
+        if self._recalc_job.is_running:
             return
         if self._form.appearance != self._original_appearance:
             ctk.set_appearance_mode(self._original_appearance)

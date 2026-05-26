@@ -11,6 +11,7 @@ import queue as queue_module
 import threading
 from pathlib import Path
 
+from src.database import init_db
 from src.model import compute_all_schedules
 from src.model import train as run_training
 from src.model.config import TrainConfig
@@ -19,14 +20,16 @@ from src.settings import load_settings
 
 def training_worker(
     db_url: str,
+    src_lang: str,
+    tgt_lang: str,
     cfg: TrainConfig,
     out_queue: queue_module.Queue,
     stop_event: threading.Event,
 ) -> None:
     """Run :func:`train` and push outcome events onto ``out_queue``."""
     try:
+        init_db(db_url, src_lang, tgt_lang)
         result_path = run_training(
-            db_url=db_url,
             config=cfg,
             on_epoch=lambda e, tr, vl: out_queue.put(("epoch", e, tr, vl)),
             stop_event=stop_event,
