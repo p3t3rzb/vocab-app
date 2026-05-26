@@ -15,6 +15,7 @@ import customtkinter as ctk
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
@@ -29,6 +30,8 @@ class LossPlot:
         self._epochs: list[int] = []
         self._train_losses: list[float] = []
         self._val_losses: list[float] = []
+        self._pending_after_id: str | None = None
+        self._destroyed = False
         self._build_figure()
 
     # ------------------------------------------------------------------
@@ -101,10 +104,14 @@ class LossPlot:
         out yet (its width/height stays under 10 px until Tk has measured
         it for the first time).
         """
+        self._pending_after_id = None
+        if self._destroyed:
+            return
+
         w = self._target.winfo_width()
         h = self._target.winfo_height()
         if w < 10 or h < 10:
-            self._target.after(50, self.render)
+            self._pending_after_id = self._target.after(50, self.render)
             return
 
         self._fig.set_size_inches(w / self._fig.dpi, h / self._fig.dpi)
@@ -119,3 +126,30 @@ class LossPlot:
         photo = tk.PhotoImage(data=png_b64)
         self._target.configure(image=photo)
         self._target._photo = photo  # prevent GC
+
+    # ------------------------------------------------------------------
+    # Teardown
+    # ------------------------------------------------------------------
+
+    def destroy(self) -> None:
+        """Cancel pending render callbacks and free the matplotlib figure."""
+        if self._destroyed:
+            return
+        self._destroyed = True
+        if self._pending_after_id is not None:
+            try:
+                self._target.after_cancel(self._pending_after_id)
+            except Exception:
+                pass
+            self._pending_after_id = None
+        # Drop the PhotoImage reference held on the label so it can be GC'd.
+        if hasattr(self._target, "_photo"):
+            try:
+                self._target.configure(image="")
+            except Exception:
+                pass
+            try:
+                del self._target._photo
+            except Exception:
+                pass
+        plt.close(self._fig)

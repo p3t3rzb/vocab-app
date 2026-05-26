@@ -14,14 +14,15 @@ from src.model.lstm import RecallLSTM
 class Predictor:
     """Inference helper exposing point probabilities and next-review estimates.
 
-    Wraps an already-trained, already-on-device model. Caller is responsible
-    for placing the model on its desired device and calling ``.eval()``
-    (which :func:`src.model.load_model` does).
+    Wraps an already-trained, already-on-device model. ``eval()`` is
+    enforced on the wrapped model so dropout can't leak into inference
+    even if the caller forgot to switch modes.
     """
 
     def __init__(self, model: RecallLSTM, config: PredictConfig | None = None) -> None:
         """Wrap a trained model. ``None`` config uses :class:`PredictConfig` defaults."""
         self._model = model
+        self._model.eval()
         self._config = config or PredictConfig()
         self._device = next(model.parameters()).device
         self._search = ThresholdSearch(self._config)

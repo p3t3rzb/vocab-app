@@ -185,7 +185,8 @@ class PracticeScreen(BaseScreen):
         self._keys_bound = False
 
     def on_destroy(self) -> None:
-        """Detach root-level key bindings so the next screen doesn't inherit them."""
+        """Stop owned jobs (via super) and detach root-level key bindings."""
+        super().on_destroy()
         self._unbind_keys()
 
     def _on_key(self, key: ArrowKey) -> None:

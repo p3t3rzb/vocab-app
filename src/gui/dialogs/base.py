@@ -40,7 +40,10 @@ class BaseDialog(ctk.CTkToplevel):
         self.grab_set()
         self.lift()
         self.focus_force()
-        self.after(self._SAFE_GRAB_DELAY_MS, self._safe_grab)
+        self._safe_grab_after_id: str | None = self.after(
+            self._SAFE_GRAB_DELAY_MS, self._safe_grab,
+        )
+        self.bind("<Destroy>", self._on_destroy_event, add="+")
 
     # ------------------------------------------------------------------
     # Hooks
@@ -69,7 +72,19 @@ class BaseDialog(ctk.CTkToplevel):
 
     def _safe_grab(self) -> None:
         """Re-grab focus once the window is fully realised (ignoring failures)."""
+        self._safe_grab_after_id = None
         try:
             self.grab_set()
         except Exception:
             pass
+
+    def _on_destroy_event(self, event: object) -> None:
+        """Cancel the pending ``_safe_grab`` so it doesn't fire after destroy."""
+        if getattr(event, "widget", None) is not self:
+            return
+        if self._safe_grab_after_id is not None:
+            try:
+                self.after_cancel(self._safe_grab_after_id)
+            except Exception:
+                pass
+            self._safe_grab_after_id = None

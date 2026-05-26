@@ -208,10 +208,6 @@ class SettingsScreen(BaseScreen):
     # Navigation
     # ------------------------------------------------------------------
 
-    def on_destroy(self) -> None:
-        """Signal an active recalc to stop on screen teardown."""
-        self._recalc_job.stop()
-
     def _go_back(self) -> None:
         """Return to the home screen, reverting any unsaved appearance preview."""
         if self._recalculating:

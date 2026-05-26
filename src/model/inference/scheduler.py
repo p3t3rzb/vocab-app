@@ -37,6 +37,7 @@ class BatchScheduler:
         schedule_cfg: ScheduleConfig,
     ) -> None:
         self._model = model
+        self._model.eval()
         self._predict_cfg = predict_cfg
         self._schedule_cfg = schedule_cfg
         self._device = next(model.parameters()).device

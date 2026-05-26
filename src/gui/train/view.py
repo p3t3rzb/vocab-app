@@ -60,7 +60,7 @@ class TrainScreen(BaseScreen):
         )
 
         # Schedule the initial blank plot draw once the widget has a size.
-        self.after(100, self._plot.render)
+        self._initial_render_after_id = self.after(100, self._plot.render)
 
     # ------------------------------------------------------------------
     # UI
@@ -248,9 +248,15 @@ class TrainScreen(BaseScreen):
     # ------------------------------------------------------------------
 
     def on_destroy(self) -> None:
-        """Signal any active worker to stop on screen teardown."""
-        self._train_job.stop()
-        self._schedule_job.stop()
+        """Stop owned jobs (via super), cancel the initial render, free the plot."""
+        super().on_destroy()
+        if self._initial_render_after_id is not None:
+            try:
+                self.after_cancel(self._initial_render_after_id)
+            except Exception:
+                pass
+            self._initial_render_after_id = None
+        self._plot.destroy()
 
     def _go_back(self) -> None:
         """Navigate to the word list, confirming if work is in progress."""

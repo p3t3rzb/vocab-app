@@ -56,6 +56,12 @@ class BackgroundJob:
         self._thread: threading.Thread | None = None
         self._running = False
 
+        # Auto-register with a BaseScreen-style owner so the screen's
+        # on_destroy can stop every owned job in one place.
+        owned = getattr(owner, "_owned_jobs", None)
+        if owned is not None:
+            owned.append(self)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -97,6 +103,15 @@ class BackgroundJob:
         """Drain the queue, dispatch each event to its handler, reschedule."""
         if not self._running:
             return
+
+        # If the owning screen has been torn down, drop events on the floor
+        # so handlers don't touch destroyed Tk widgets. The worker thread
+        # is told to stop (idempotent) but we still let it finish naturally.
+        if getattr(self._owner, "_destroyed", False):
+            self.stop_event.set()
+            self._running = False
+            return
+
         try:
             while True:
                 event = self.queue.get_nowait()

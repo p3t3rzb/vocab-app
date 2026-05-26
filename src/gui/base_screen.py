@@ -16,6 +16,7 @@ import customtkinter as ctk
 
 if TYPE_CHECKING:
     from .app import App
+    from .background import BackgroundJob
     from .db_context import DbContext
 
 
@@ -28,12 +29,18 @@ class BaseScreen(ctk.CTkFrame):
       2. ``App._swap`` calls ``on_show()`` after packing the frame.
       3. Tk fires ``<Destroy>`` (filtered to ``event.widget is self``),
          which invokes ``on_destroy()``.
+
+    Owned :class:`BackgroundJob` instances register themselves with the
+    screen (via ``_owned_jobs``) so the default ``on_destroy`` can stop
+    them all without each subclass repeating the cleanup. Subclasses that
+    need extra teardown should call ``super().on_destroy()`` first.
     """
 
     def __init__(self, app: App) -> None:
         super().__init__(app, corner_radius=0)
         self._app: App = app
         self._destroyed = False
+        self._owned_jobs: list[BackgroundJob] = []
 
         self.build()
         self.bind("<Destroy>", self._dispatch_destroy)
@@ -61,7 +68,9 @@ class BaseScreen(ctk.CTkFrame):
         """Called by :meth:`App._swap` after the frame is packed. No-op by default."""
 
     def on_destroy(self) -> None:
-        """Called once when this frame is torn down. No-op by default."""
+        """Stop every owned :class:`BackgroundJob`. Subclasses may extend (call ``super()``)."""
+        for job in self._owned_jobs:
+            job.stop()
 
     # ------------------------------------------------------------------
     # Internals
