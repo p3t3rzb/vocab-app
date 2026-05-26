@@ -1,7 +1,9 @@
-"""Add / edit dialog for a single word.
+"""Modal "Add word" / "Edit word" dialog.
 
-A small modal :class:`~customtkinter.CTkToplevel` with two text fields and
-Save / Cancel buttons. Changes are committed only when Save is clicked.
+Pass ``word=None`` to create a new word, or an existing :class:`Word`
+to edit it. Newly created words start with
+``next_rep_fwd_at = next_rep_rev_at = 0`` so they appear in the next
+practice session before any model has scheduled them.
 """
 from __future__ import annotations
 
@@ -12,15 +14,12 @@ import customtkinter as ctk
 from src.database import WordRepository, get_session
 from src.database.models import Word
 
+from ..theme import WindowSizes
+from .base import BaseDialog
 
-class WordEditDialog(ctk.CTkToplevel):
-    """Modal dialog for adding or editing a word pair.
 
-    Pass ``word=None`` to create a new word, or an existing :class:`Word`
-    instance to edit it. Newly created words start with
-    ``next_rep_fwd_at = next_rep_rev_at = 0`` (immediately due) so they show
-    up in the next practice session before any model has scheduled them.
-    """
+class WordEditDialog(BaseDialog):
+    """Two-field modal that adds a new word or edits an existing one."""
 
     def __init__(
         self,
@@ -29,35 +28,18 @@ class WordEditDialog(ctk.CTkToplevel):
         tgt_lang: str,
         word: Word | None,
     ) -> None:
-        super().__init__(master)
         self._src_lang = src_lang
         self._tgt_lang = tgt_lang
         self._word = word
         self._saved = False
 
-        self.title("Edit Word" if word else "Add Word")
-        self.geometry("440x220")
-        self.resizable(False, False)
+        super().__init__(
+            master,
+            title="Edit Word" if word else "Add Word",
+            size=WindowSizes.WORD_EDIT_DIALOG,
+        )
 
-        self._build_ui()
-
-        # Make modal
-        self.transient(master)  # type: ignore[arg-type]
-        self.grab_set()
-        self.lift()
-        self.focus_force()
-
-        # Ensure grab_set works even after the window fully appears
-        self.after(50, self._safe_grab)
-
-    def _safe_grab(self) -> None:
-        """Re-grab the modal focus once the window is fully realised (ignoring failures)."""
-        try:
-            self.grab_set()
-        except Exception:
-            pass
-
-    def _build_ui(self) -> None:
+    def _build(self) -> None:
         """Lay out the two text fields, action buttons, and key bindings."""
         self.grid_columnconfigure(1, weight=1)
 
@@ -96,8 +78,7 @@ class WordEditDialog(ctk.CTkToplevel):
         )
 
         self._src_entry.focus()
-        self.bind("<Return>", lambda _e: self._save())
-        self.bind("<Escape>", lambda _e: self.destroy())
+        self.bind_default_keys(on_save=self._save)
 
     def _save(self) -> None:
         """Validate inputs, persist the new/updated word, and close the dialog."""
@@ -124,7 +105,13 @@ class WordEditDialog(ctk.CTkToplevel):
                         )
                         return
                     new_id = repo.get_next_id()
-                    repo.add(Word(id=new_id, source_text=src_text, target_text=tgt_text, next_rep_fwd_at=0, next_rep_rev_at=0))
+                    repo.add(Word(
+                        id=new_id,
+                        source_text=src_text,
+                        target_text=tgt_text,
+                        next_rep_fwd_at=0,
+                        next_rep_rev_at=0,
+                    ))
             else:
                 with get_session() as session:
                     word = WordRepository(session).get_by_id(self._word.id)

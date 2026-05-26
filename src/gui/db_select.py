@@ -8,31 +8,43 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import customtkinter as ctk
-from tkinter import messagebox, ttk, font as tkfont
+from tkinter import messagebox
 
 from src.database import init_db
+
+from .base_screen import BaseScreen
+from .db_context import DbContext
+from .dialogs import BaseDialog
+from .theme import Fonts, Paths, WindowSizes
+from .widgets import ColumnSpec, apply_treeview_style, build_tree
 
 if TYPE_CHECKING:
     from .app import App
 
-STORAGE_DIR = Path(__file__).parent.parent.parent / "storage"
+STORAGE_DIR = Paths.STORAGE_DIR
+
+
+_NON_ALPHANUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(value: str) -> str:
+    """Lowercase, collapse runs of non-alphanumeric chars to ``_``, trim."""
+    return _NON_ALPHANUM_RE.sub("_", value.lower()).strip("_")
 
 
 def _safe_db_basename(src: str, tgt: str) -> str:
     """Build a filesystem-safe ``<src>_<tgt>`` basename (no extension).
 
-    Lowercases and replaces any run of non-alphanumeric characters with an
-    underscore, so path separators and ``..`` cannot escape ``storage/``.
-    Returns the empty string if both inputs sanitise to nothing.
+    Returns the empty string if either side sanitises to nothing — this is
+    also a safety check, since path separators and ``..`` cannot survive
+    ``_slugify`` and so the result cannot escape ``storage/``.
     """
-    def _clean(s: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
-    src_c = _clean(src)
-    tgt_c = _clean(tgt)
+    src_c, tgt_c = _slugify(src), _slugify(tgt)
     if not src_c or not tgt_c:
         return ""
     return f"{src_c}_{tgt_c}"
@@ -59,18 +71,15 @@ def _read_language_pair(db_path: Path) -> tuple[str, str] | None:
     return (row[0], row[1]) if row else None
 
 
-class DatabaseSelectScreen(ctk.CTkFrame):
+class DatabaseSelectScreen(BaseScreen):
     """Lists every database in ``storage/`` and lets the user open or create one."""
 
     def __init__(self, master: App) -> None:
-        super().__init__(master, corner_radius=0)
-        self._app = master
         self._db_entries: list[tuple[Path, str, str]] = []
-
-        self._build_ui()
+        super().__init__(master)
         self._load_databases()
 
-    def _build_ui(self) -> None:
+    def build(self) -> None:
         """Construct the title, treeview, scroll bar, and action buttons."""
         self.grid_rowconfigure(1, weight=1)
         self.grid_columnconfigure(0, weight=1)
@@ -78,7 +87,7 @@ class DatabaseSelectScreen(ctk.CTkFrame):
         title = ctk.CTkLabel(
             self,
             text="Vocabulary Databases",
-            font=ctk.CTkFont(size=22, weight="bold"),
+            font=ctk.CTkFont(**Fonts.TITLE),
         )
         title.grid(row=0, column=0, pady=(24, 12), padx=24, sticky="w")
 
@@ -87,30 +96,17 @@ class DatabaseSelectScreen(ctk.CTkFrame):
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
-        style = ttk.Style()
-        _apply_treeview_style(style)
-
-        self._tree = ttk.Treeview(
+        apply_treeview_style()
+        self._tree, vsb = build_tree(
             tree_frame,
-            columns=("file", "source", "target", "words", "trained"),
-            show="headings",
-            selectmode="browse",
-            style="App.Treeview",
+            columns=(
+                ColumnSpec("file", "File", 180, 120),
+                ColumnSpec("source", "Source language", 150, 100),
+                ColumnSpec("target", "Target language", 150, 100),
+                ColumnSpec("words", "Words", 70, 60, anchor="e"),
+                ColumnSpec("trained", "Last Trained", 160, 120),
+            ),
         )
-        self._tree.heading("file", text="File")
-        self._tree.heading("source", text="Source language")
-        self._tree.heading("target", text="Target language")
-        self._tree.heading("words", text="Words")
-        self._tree.heading("trained", text="Last Trained")
-        self._tree.column("file", width=180, minwidth=120)
-        self._tree.column("source", width=150, minwidth=100)
-        self._tree.column("target", width=150, minwidth=100)
-        self._tree.column("words", width=70, minwidth=60, anchor="e")
-        self._tree.column("trained", width=160, minwidth=120)
-
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
-
         self._tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
 
@@ -151,7 +147,9 @@ class DatabaseSelectScreen(ctk.CTkFrame):
         self.wait_window(dialog)
         if dialog.created_path is not None:
             self._load_databases()
-            self._app.show_word_list(dialog.created_path, dialog.src_lang, dialog.tgt_lang)
+            self._app.show_word_list(
+                DbContext(dialog.created_path, dialog.src_lang, dialog.tgt_lang)
+            )
 
     def _open_selected(self) -> None:
         """Navigate to the word list of the currently selected database."""
@@ -160,10 +158,10 @@ class DatabaseSelectScreen(ctk.CTkFrame):
             return
         idx = self._tree.index(sel[0])
         db_path, src, tgt = self._db_entries[idx]
-        self._app.show_word_list(db_path, src, tgt)
+        self._app.show_word_list(DbContext(db_path, src, tgt))
 
 
-class NewDatabaseDialog(ctk.CTkToplevel):
+class NewDatabaseDialog(BaseDialog):
     """Modal dialog: collect language names and create an empty database.
 
     On Create, the dialog calls :func:`init_db` to materialise the new SQLite
@@ -172,35 +170,12 @@ class NewDatabaseDialog(ctk.CTkToplevel):
     """
 
     def __init__(self, master: ctk.CTkBaseClass) -> None:
-        super().__init__(master)
         self.created_path: Path | None = None
         self.src_lang: str = ""
         self.tgt_lang: str = ""
+        super().__init__(master, title="New Database", size=WindowSizes.NEW_DB_DIALOG)
 
-        self.title("New Database")
-        self.geometry("420x260")
-        self.resizable(False, False)
-
-        self._build_ui()
-
-        self.transient(master)  # type: ignore[arg-type]
-        self.grab_set()
-        self.lift()
-        self.focus_force()
-        self.after(50, self._safe_grab)
-
-    def _safe_grab(self) -> None:
-        """Re-attempt the modal grab once the window is fully realised.
-
-        On some window managers ``grab_set`` raises if called too early; we
-        ignore the failure since the up-front ``grab_set`` usually succeeds.
-        """
-        try:
-            self.grab_set()
-        except Exception:
-            pass
-
-    def _build_ui(self) -> None:
+    def _build(self) -> None:
         """Lay out the language entries, filename preview, and action buttons."""
         self.grid_columnconfigure(1, weight=1)
 
@@ -232,8 +207,7 @@ class NewDatabaseDialog(ctk.CTkToplevel):
         ctk.CTkButton(btn_frame, text="Create", width=100, command=self._create).pack(side="left", padx=8)
 
         self._src_entry.focus()
-        self.bind("<Return>", lambda _e: self._create())
-        self.bind("<Escape>", lambda _e: self.destroy())
+        self.bind_default_keys(on_save=self._create)
 
     def _update_filename(self) -> None:
         """Refresh the read-only filename label whenever an entry changes."""
@@ -243,7 +217,7 @@ class NewDatabaseDialog(ctk.CTkToplevel):
         if base:
             self._filename_label.configure(text=f"{base}.db")
         elif src:
-            src_c = re.sub(r"[^a-z0-9]+", "_", src.lower()).strip("_")
+            src_c = _slugify(src)
             self._filename_label.configure(text=f"{src_c}_....db" if src_c else "")
         else:
             self._filename_label.configure(text="")
@@ -291,8 +265,7 @@ class NewDatabaseDialog(ctk.CTkToplevel):
 
 def _last_trained(src: str, tgt: str) -> str:
     """Return the checkpoint mtime as a display string, or ``"—"`` if not trained."""
-    from datetime import datetime
-    ckpt = STORAGE_DIR / "models" / f"{src.lower()}_{tgt.lower()}.pt"
+    ckpt = Paths.model_path(src, tgt)
     if not ckpt.exists():
         return "—"
     return datetime.fromtimestamp(ckpt.stat().st_mtime).strftime("%b %d, %Y  %H:%M")
@@ -311,43 +284,3 @@ def _word_count(db_path: Path) -> int:
     finally:
         con.close()
     return row[0] if row else 0
-
-
-def _apply_treeview_style(style: ttk.Style) -> None:
-    """Configure the shared ``App.Treeview`` ttk style for the current appearance mode.
-
-    Called from every screen that hosts a treeview so colour, padding, and
-    selection styles stay consistent with the surrounding customtkinter
-    widgets in both light and dark mode.
-    """
-    appearance = ctk.get_appearance_mode()
-    if appearance == "Dark":
-        bg, fg, sel_bg, heading_bg, border = "#2b2b2b", "#dce4ee", "#1f6aa5", "#1a1a2e", "#3a3a3a"
-        row_odd, row_even = "#2b2b2b", "#323232"
-    else:
-        bg, fg, sel_bg, heading_bg, border = "#f0f0f0", "#1a1a1a", "#1f6aa5", "#dde1e7", "#cccccc"
-        row_odd, row_even = "#ffffff", "#f5f5f5"
-
-    style.theme_use("default")
-    style.configure(
-        "App.Treeview",
-        background=bg,
-        foreground=fg,
-        rowheight=28,
-        fieldbackground=bg,
-        borderwidth=0,
-        font=("", 13),
-    )
-    style.configure(
-        "App.Treeview.Heading",
-        background=heading_bg,
-        foreground=fg,
-        font=("", 13, "bold"),
-        borderwidth=1,
-        relief="flat",
-    )
-    style.map(
-        "App.Treeview",
-        background=[("selected", sel_bg)],
-        foreground=[("selected", "#ffffff")],
-    )

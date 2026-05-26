@@ -2,98 +2,58 @@
 
 Also hosts the entry buttons that navigate to the Practice and Train Model
 screens. The treeview shows per-direction due times rendered by
-:func:`_format_due`.
+:func:`format_due`.
 """
 from __future__ import annotations
 
-import time
-from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
 from src.database import WordRepository, init_db, get_session
 from src.database.models import Word
-from .db_select import _apply_treeview_style
+from .base_screen import BaseScreen
+from .formatting import format_due
+from .theme import Colors, Fonts
+from .widgets import ColumnSpec, apply_treeview_style, build_header, build_tree
 
 if TYPE_CHECKING:
     from .app import App
 
 
-def _format_due(ts: int | None) -> str:
-    """Render a due timestamp as ``"Due now"`` / ``"in 2d 4h"`` / ``"–"``.
-
-    ``None`` becomes ``"–"`` (no model trained yet), ``≤ now`` becomes
-    ``"Due now"``, and otherwise a coarse "in Xd Yh" string. Minute-level
-    precision is only shown when the remaining time is under an hour.
-    """
-    if ts is None:
-        return "–"
-    remaining = ts - int(time.time())
-    if remaining <= 0:
-        return "Due now"
-    d, rem = divmod(remaining, 86400)
-    h, rem = divmod(rem, 3600)
-    m = rem // 60
-    if d >= 1:
-        return f"in {d}d {h}h" if h else f"in {d}d"
-    if h >= 1:
-        return f"in {h}h {m}m" if m else f"in {h}h"
-    return f"in {m}m" if m else "Due now"
-
-
-class WordListScreen(ctk.CTkFrame):
+class WordListScreen(BaseScreen):
     """Scrollable, searchable table of words with edit / delete / practice / train actions."""
 
-    def __init__(
-        self,
-        master: App,
-        db_path: Path,
-        src_lang: str,
-        tgt_lang: str,
-    ) -> None:
-        super().__init__(master, corner_radius=0)
-        self._app = master
-        self._db_path = db_path
-        self._src_lang = src_lang
-        self._tgt_lang = tgt_lang
-
-        init_db(f"sqlite:///{db_path}", src_lang, tgt_lang)
-
+    def __init__(self, master: App) -> None:
         self._all_words: list[Word] = []
         self._filtered: list[Word] = []
-
-        self._build_ui()
+        super().__init__(master)
+        init_db(self._ctx.db_url, self._ctx.src_lang, self._ctx.tgt_lang)
         self._load_words()
 
     # ------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------
 
-    def _build_ui(self) -> None:
+    def build(self) -> None:
         """Build the header, search/action toolbar, and word treeview."""
         self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
         # Header row
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
-        header.grid_columnconfigure(1, weight=1)
+        def _add_count(parent: ctk.CTkFrame) -> ctk.CTkLabel:
+            self._count_label = ctk.CTkLabel(parent, text="", font=ctk.CTkFont(**Fonts.SMALL))
+            self._count_label.grid(row=0, column=2, sticky="e")
+            return self._count_label
 
-        ctk.CTkButton(
-            header, text="← Back", width=80, command=self._app.show_db_select
-        ).grid(row=0, column=0, sticky="w")
-
-        self._title_label = ctk.CTkLabel(
-            header,
-            text=f"{self._src_lang}  ↔  {self._tgt_lang}",
-            font=ctk.CTkFont(size=18, weight="bold"),
+        header = build_header(
+            self,
+            title=self._ctx.title,
+            on_back=self._app.show_db_select,
+            right_widget_factory=_add_count,
         )
-        self._title_label.grid(row=0, column=1, padx=12, sticky="w")
-
-        self._count_label = ctk.CTkLabel(header, text="", font=ctk.CTkFont(size=13))
-        self._count_label.grid(row=0, column=2, sticky="e")
+        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
 
         # Search + action buttons
         toolbar = ctk.CTkFrame(self, fg_color="transparent")
@@ -120,8 +80,8 @@ class WordListScreen(ctk.CTkFrame):
             text="Delete",
             width=70,
             state="disabled",
-            fg_color="#c0392b",
-            hover_color="#922b21",
+            fg_color=Colors.DANGER,
+            hover_color=Colors.DANGER_HOVER,
             command=self._delete_word,
         )
         self._btn_delete.grid(row=0, column=3, padx=2)
@@ -140,29 +100,18 @@ class WordListScreen(ctk.CTkFrame):
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
-        style = ttk.Style()
-        _apply_treeview_style(style)
-
-        src3 = self._src_lang[:3]
-        tgt3 = self._tgt_lang[:3]
-        self._tree = ttk.Treeview(
+        apply_treeview_style()
+        src3 = self._ctx.src_lang[:3]
+        tgt3 = self._ctx.tgt_lang[:3]
+        self._tree, vsb = build_tree(
             tree_frame,
-            columns=("source", "target", "fwd_due", "rev_due"),
-            show="headings",
-            selectmode="browse",
-            style="App.Treeview",
+            columns=(
+                ColumnSpec("source", self._ctx.src_lang, 240, 100),
+                ColumnSpec("target", self._ctx.tgt_lang, 240, 100),
+                ColumnSpec("fwd_due", f"{src3}→{tgt3}", 110, 70),
+                ColumnSpec("rev_due", f"{tgt3}→{src3}", 110, 70),
+            ),
         )
-        self._tree.heading("source", text=self._src_lang)
-        self._tree.heading("target", text=self._tgt_lang)
-        self._tree.heading("fwd_due", text=f"{src3}→{tgt3}")
-        self._tree.heading("rev_due", text=f"{tgt3}→{src3}")
-        self._tree.column("source", width=240, minwidth=100)
-        self._tree.column("target", width=240, minwidth=100)
-        self._tree.column("fwd_due", width=110, minwidth=70)
-        self._tree.column("rev_due", width=110, minwidth=70)
-
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
         self._tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
 
@@ -197,8 +146,8 @@ class WordListScreen(ctk.CTkFrame):
                 values=(
                     word.source_text,
                     word.target_text,
-                    _format_due(word.next_rep_fwd_at),
-                    _format_due(word.next_rep_rev_at),
+                    format_due(word.next_rep_fwd_at),
+                    format_due(word.next_rep_rev_at),
                 ),
             )
 
@@ -242,11 +191,11 @@ class WordListScreen(ctk.CTkFrame):
 
     def _add_word(self) -> None:
         """Open the modal "Add word" dialog and reload on close."""
-        from .word_edit import WordEditDialog
+        from .dialogs import WordEditDialog
         dialog = WordEditDialog(
             self,
-            src_lang=self._src_lang,
-            tgt_lang=self._tgt_lang,
+            src_lang=self._ctx.src_lang,
+            tgt_lang=self._ctx.tgt_lang,
             word=None,
         )
         self.wait_window(dialog)
@@ -257,11 +206,11 @@ class WordListScreen(ctk.CTkFrame):
         word = self._selected_word()
         if word is None:
             return
-        from .word_edit import WordEditDialog
+        from .dialogs import WordEditDialog
         dialog = WordEditDialog(
             self,
-            src_lang=self._src_lang,
-            tgt_lang=self._tgt_lang,
+            src_lang=self._ctx.src_lang,
+            tgt_lang=self._ctx.tgt_lang,
             word=word,
         )
         self.wait_window(dialog)
@@ -289,8 +238,8 @@ class WordListScreen(ctk.CTkFrame):
 
     def _open_train_dialog(self) -> None:
         """Navigate to the Train Model screen."""
-        self._app.show_train_screen(self._db_path, self._src_lang, self._tgt_lang)
+        self._app.show_train_screen(self._ctx)
 
     def _open_practice(self) -> None:
         """Navigate to the Practice screen."""
-        self._app.show_practice_screen(self._db_path, self._src_lang, self._tgt_lang)
+        self._app.show_practice_screen(self._ctx)

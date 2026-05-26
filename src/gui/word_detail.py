@@ -5,23 +5,19 @@ event (in either direction) ordered by timestamp.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from tkinter import ttk
 from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
 from src.database import Direction, RepetitionRepository, WordRepository, get_session
 from src.database.models import Repetition
-from .db_select import _apply_treeview_style
+from .base_screen import BaseScreen
+from .formatting import format_timestamp
+from .theme import Fonts
+from .widgets import ColumnSpec, apply_treeview_style, build_header, build_tree
 
 if TYPE_CHECKING:
     from .app import App
-
-
-def _fmt_ts(ts: int) -> str:
-    """Format a Unix timestamp as ``"YYYY-MM-DD  HH:MM:SS"``."""
-    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d  %H:%M:%S")
 
 
 def _fmt_direction(rep: Repetition, src_lang: str, tgt_lang: str) -> str:
@@ -31,59 +27,41 @@ def _fmt_direction(rep: Repetition, src_lang: str, tgt_lang: str) -> str:
     return f"{tgt_lang} → {src_lang}"
 
 
-class WordDetailScreen(ctk.CTkFrame):
+class WordDetailScreen(BaseScreen):
     """Lists every repetition event for one word, in either direction."""
 
-    def __init__(
-        self,
-        master: App,
-        word_id: int,
-        src_lang: str,
-        tgt_lang: str,
-    ) -> None:
-        super().__init__(master, corner_radius=0)
-        self._app = master
+    def __init__(self, master: App, word_id: int) -> None:
         self._word_id = word_id
-        self._src_lang = src_lang
-        self._tgt_lang = tgt_lang
-
-        self._build_ui()
+        super().__init__(master)
         self._load()
 
-    def _build_ui(self) -> None:
+    def build(self) -> None:
         """Construct the header, summary label, and history treeview."""
         self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        # Header
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
-        header.grid_columnconfigure(1, weight=1)
+        # Header — Back button + word label + Edit button
+        def _add_edit(parent: ctk.CTkFrame) -> ctk.CTkButton:
+            self._btn_edit = ctk.CTkButton(
+                parent, text="Edit", width=80, command=self._edit_word
+            )
+            self._btn_edit.grid(row=0, column=2, sticky="e")
+            return self._btn_edit
 
-        ctk.CTkButton(
-            header,
-            text="← Back",
-            width=80,
-            command=self._app.back_to_word_list,
-        ).grid(row=0, column=0, sticky="w")
-
-        self._word_label = ctk.CTkLabel(
-            header,
-            text="",
-            font=ctk.CTkFont(size=18, weight="bold"),
+        # The word label is the header's title slot — rewritten in _load().
+        self._header = build_header(
+            self,
+            title="",
+            on_back=self._app.back_to_word_list,
+            right_widget_factory=_add_edit,
         )
-        self._word_label.grid(row=0, column=1, padx=12, sticky="w")
-
-        self._btn_edit = ctk.CTkButton(
-            header, text="Edit", width=80, command=self._edit_word
-        )
-        self._btn_edit.grid(row=0, column=2, sticky="e")
+        self._header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
 
         # Repetition count label
         self._rep_label = ctk.CTkLabel(
             self,
             text="Repetition history",
-            font=ctk.CTkFont(size=14),
+            font=ctk.CTkFont(**Fonts.BODY),
             anchor="w",
         )
         self._rep_label.grid(row=1, column=0, sticky="w", padx=20, pady=(8, 4))
@@ -94,25 +72,16 @@ class WordDetailScreen(ctk.CTkFrame):
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
 
-        style = ttk.Style()
-        _apply_treeview_style(style)
-
-        self._tree = ttk.Treeview(
+        apply_treeview_style()
+        self._tree, vsb = build_tree(
             tree_frame,
-            columns=("direction", "date", "remembered"),
-            show="headings",
+            columns=(
+                ColumnSpec("direction", "Direction", 240, 160),
+                ColumnSpec("date", "Date & Time", 200, 160),
+                ColumnSpec("remembered", "Remembered", 110, 80, anchor="center"),
+            ),
             selectmode="none",
-            style="App.Treeview",
         )
-        self._tree.heading("direction", text="Direction")
-        self._tree.heading("date", text="Date & Time")
-        self._tree.heading("remembered", text="Remembered")
-        self._tree.column("direction", width=240, minwidth=160)
-        self._tree.column("date", width=200, minwidth=160)
-        self._tree.column("remembered", width=110, minwidth=80, anchor="center")
-
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
-        self._tree.configure(yscrollcommand=vsb.set)
         self._tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
 
@@ -121,12 +90,10 @@ class WordDetailScreen(ctk.CTkFrame):
         with get_session() as session:
             word = WordRepository(session).get_by_id(self._word_id)
             if word is None:
-                self._word_label.configure(text="(word not found)")
+                self._header.set_title("(word not found)")
                 return
 
-            self._word_label.configure(
-                text=f"{word.source_text}  ↔  {word.target_text}"
-            )
+            self._header.set_title(f"{word.source_text}  ↔  {word.target_text}")
 
             reps_fwd = RepetitionRepository(session).get_for_word(
                 self._word_id, Direction.FORWARD
@@ -144,8 +111,8 @@ class WordDetailScreen(ctk.CTkFrame):
                 "",
                 "end",
                 values=(
-                    _fmt_direction(rep, self._src_lang, self._tgt_lang),
-                    _fmt_ts(rep.practiced_at),
+                    _fmt_direction(rep, self._ctx.src_lang, self._ctx.tgt_lang),
+                    format_timestamp(rep.practiced_at),
                     remembered,
                 ),
             )
@@ -164,11 +131,11 @@ class WordDetailScreen(ctk.CTkFrame):
             # Detach from session so we can pass a plain object to the dialog
             session.expunge(word)
 
-        from .word_edit import WordEditDialog
+        from .dialogs import WordEditDialog
         dialog = WordEditDialog(
             self,
-            src_lang=self._src_lang,
-            tgt_lang=self._tgt_lang,
+            src_lang=self._ctx.src_lang,
+            tgt_lang=self._ctx.tgt_lang,
             word=word,
         )
         self.wait_window(dialog)
