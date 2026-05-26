@@ -41,13 +41,17 @@ def _iter_recalc_targets() -> list[tuple[Path, Path, str, str, int]]:
     for db_path in sorted(STORAGE_DIR.glob("*.db")):
         try:
             con = sqlite3.connect(str(db_path))
+        except Exception:
+            continue
+        try:
             row = con.execute(
                 "SELECT source_language, target_language FROM language_pair LIMIT 1"
             ).fetchone()
             count_row = con.execute("SELECT COUNT(*) FROM words").fetchone()
-            con.close()
         except Exception:
             continue
+        finally:
+            con.close()
         if not row:
             continue
         src, tgt = row[0], row[1]

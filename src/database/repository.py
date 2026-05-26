@@ -40,6 +40,12 @@ class WordRepository:
         """Return the total number of words in the database."""
         return self._session.scalar(select(func.count()).select_from(Word)) or 0
 
+    def find_by_source_text(self, source_text: str) -> Word | None:
+        """Return the word with the given ``source_text``, or ``None`` if absent."""
+        return self._session.scalars(
+            select(Word).where(Word.source_text == source_text).limit(1)
+        ).first()
+
     def add(self, word: Word) -> None:
         """Stage ``word`` for insertion on the next commit."""
         self._session.add(word)

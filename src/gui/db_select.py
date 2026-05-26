@@ -6,6 +6,7 @@ dialog and the navigation entry point to the global settings screen.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +22,22 @@ if TYPE_CHECKING:
 STORAGE_DIR = Path(__file__).parent.parent.parent / "storage"
 
 
+def _safe_db_basename(src: str, tgt: str) -> str:
+    """Build a filesystem-safe ``<src>_<tgt>`` basename (no extension).
+
+    Lowercases and replaces any run of non-alphanumeric characters with an
+    underscore, so path separators and ``..`` cannot escape ``storage/``.
+    Returns the empty string if both inputs sanitise to nothing.
+    """
+    def _clean(s: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "_", s.lower()).strip("_")
+    src_c = _clean(src)
+    tgt_c = _clean(tgt)
+    if not src_c or not tgt_c:
+        return ""
+    return f"{src_c}_{tgt_c}"
+
+
 def _read_language_pair(db_path: Path) -> tuple[str, str] | None:
     """Return ``(source_language, target_language)`` for ``db_path``, or ``None`` on failure.
 
@@ -29,13 +46,17 @@ def _read_language_pair(db_path: Path) -> tuple[str, str] | None:
     """
     try:
         con = sqlite3.connect(str(db_path))
+    except Exception:
+        return None
+    try:
         row = con.execute(
             "SELECT source_language, target_language FROM language_pair LIMIT 1"
         ).fetchone()
-        con.close()
-        return (row[0], row[1]) if row else None
     except Exception:
         return None
+    finally:
+        con.close()
+    return (row[0], row[1]) if row else None
 
 
 class DatabaseSelectScreen(ctk.CTkFrame):
@@ -218,11 +239,12 @@ class NewDatabaseDialog(ctk.CTkToplevel):
         """Refresh the read-only filename label whenever an entry changes."""
         src = self._src_entry.get().strip()
         tgt = self._tgt_entry.get().strip()
-        if src and tgt:
-            filename = f"{src.lower()}_{tgt.lower()}".replace(" ", "_") + ".db"
-            self._filename_label.configure(text=filename)
+        base = _safe_db_basename(src, tgt)
+        if base:
+            self._filename_label.configure(text=f"{base}.db")
         elif src:
-            self._filename_label.configure(text=f"{src.lower()}_...db".replace(" ", "_"))
+            src_c = re.sub(r"[^a-z0-9]+", "_", src.lower()).strip("_")
+            self._filename_label.configure(text=f"{src_c}_....db" if src_c else "")
         else:
             self._filename_label.configure(text="")
 
@@ -235,7 +257,15 @@ class NewDatabaseDialog(ctk.CTkToplevel):
             messagebox.showwarning("Missing fields", "Both language fields must be filled in.", parent=self)
             return
 
-        filename = f"{src_lang.lower()}_{tgt_lang.lower()}".replace(" ", "_") + ".db"
+        base = _safe_db_basename(src_lang, tgt_lang)
+        if not base:
+            messagebox.showwarning(
+                "Invalid name",
+                "Language names must contain at least one letter or digit.",
+                parent=self,
+            )
+            return
+        filename = f"{base}.db"
         db_path = STORAGE_DIR / filename
 
         if db_path.exists():
@@ -272,11 +302,15 @@ def _word_count(db_path: Path) -> int:
     """Return ``COUNT(*)`` from the ``words`` table, or ``0`` on any error."""
     try:
         con = sqlite3.connect(str(db_path))
-        row = con.execute("SELECT COUNT(*) FROM words").fetchone()
-        con.close()
-        return row[0] if row else 0
     except Exception:
         return 0
+    try:
+        row = con.execute("SELECT COUNT(*) FROM words").fetchone()
+    except Exception:
+        return 0
+    finally:
+        con.close()
+    return row[0] if row else 0
 
 
 def _apply_treeview_style(style: ttk.Style) -> None:

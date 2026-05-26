@@ -296,6 +296,8 @@ class TrainScreen(ctk.CTkFrame):
 
                 elif tag == "schedule_progress":
                     _, done, total = item
+                    frac = done / total if total else 0.0
+                    self._progress.set(frac)
                     self._status_var.set(f"Computing schedules… {done}/{total}")
 
                 elif tag == "done":
@@ -335,6 +337,9 @@ class TrainScreen(ctk.CTkFrame):
         self._training = False
         self._computing_schedules = True
         self._schedule_stop_event.clear()
+        self._progress.stop()
+        self._progress.configure(mode="determinate")
+        self._progress.set(0)
         self._status_var.set("Computing schedules…")
         self._btn_cancel.configure(state="normal")
 
@@ -375,6 +380,7 @@ class TrainScreen(ctk.CTkFrame):
         """All schedules updated — re-enable controls and report success."""
         self._computing_schedules = False
         self._progress.stop()
+        self._progress.configure(mode="indeterminate")
         self._progress.set(0)
         self._btn_train.configure(state="normal")
         self._epochs_entry.configure(state="normal")
@@ -385,6 +391,7 @@ class TrainScreen(ctk.CTkFrame):
         """Schedule worker raised — show the error and reset controls."""
         self._computing_schedules = False
         self._progress.stop()
+        self._progress.configure(mode="indeterminate")
         self._progress.set(0)
         self._btn_train.configure(state="normal")
         self._epochs_entry.configure(state="normal")
@@ -397,6 +404,7 @@ class TrainScreen(ctk.CTkFrame):
         self._training = False
         self._computing_schedules = False
         self._progress.stop()
+        self._progress.configure(mode="indeterminate")
         self._progress.set(0)
         self._btn_train.configure(state="normal")
         self._epochs_entry.configure(state="normal")

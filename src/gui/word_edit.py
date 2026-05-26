@@ -6,15 +6,11 @@ Save / Cancel buttons. Changes are committed only when Save is clicked.
 from __future__ import annotations
 
 from tkinter import messagebox
-from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
 from src.database import WordRepository, get_session
 from src.database.models import Word
-
-if TYPE_CHECKING:
-    pass
 
 
 class WordEditDialog(ctk.CTkToplevel):
@@ -120,6 +116,13 @@ class WordEditDialog(ctk.CTkToplevel):
             if self._word is None:
                 with get_session() as session:
                     repo = WordRepository(session)
+                    if repo.find_by_source_text(src_text) is not None:
+                        messagebox.showwarning(
+                            "Duplicate word",
+                            f'A word with {self._src_lang.lower()} "{src_text}" already exists.',
+                            parent=self,
+                        )
+                        return
                     new_id = repo.get_next_id()
                     repo.add(Word(id=new_id, source_text=src_text, target_text=tgt_text, next_rep_fwd_at=0, next_rep_rev_at=0))
             else:
