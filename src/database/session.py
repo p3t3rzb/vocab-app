@@ -5,6 +5,7 @@ anywhere without threading the engine through every call site. Re-calling
 :func:`init_db` with a different URL replaces the active engine, which is how
 the GUI switches between language-pair databases.
 """
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 
@@ -16,6 +17,10 @@ from .models import LanguagePair
 
 _engine: Engine | None = None
 _SessionFactory: sessionmaker[Session] | None = None
+# Guards reassignment of _engine / _SessionFactory so a background init_db
+# (e.g. the settings recalc worker iterating across DBs) cannot swap the
+# factory out from under a caller that is mid-`with get_session()`.
+_lock = threading.Lock()
 
 
 def init_db(
@@ -40,15 +45,15 @@ def init_db(
     """
     global _engine, _SessionFactory
 
-    _engine = create_engine(
+    new_engine = create_engine(
         database_url,
         connect_args={"check_same_thread": False},
         echo=False,
     )
-    Base.metadata.create_all(_engine)
-    _SessionFactory = sessionmaker(bind=_engine, autocommit=False, autoflush=False, expire_on_commit=False)
+    Base.metadata.create_all(new_engine)
+    new_factory = sessionmaker(bind=new_engine, autocommit=False, autoflush=False, expire_on_commit=False)
 
-    with _engine.connect() as conn:
+    with new_engine.connect() as conn:
         cols = [row[1] for row in conn.execute(text("PRAGMA table_info(words)"))]
         added = False
         for col_name in ("next_rep_fwd_at", "next_rep_rev_at"):
@@ -58,11 +63,18 @@ def init_db(
         if added:
             conn.commit()
 
-    with _SessionFactory() as session:
+    with new_factory() as session:
         existing = session.scalars(select(LanguagePair)).first()
         if existing is None:
             session.add(LanguagePair(id=1, source_language=source_language, target_language=target_language))
             session.commit()
+
+    with _lock:
+        old_engine = _engine
+        _engine = new_engine
+        _SessionFactory = new_factory
+    if old_engine is not None:
+        old_engine.dispose()
 
 
 @contextmanager
@@ -82,9 +94,11 @@ def get_session() -> Generator[Session, None, None]:
     Raises:
         RuntimeError: if :func:`init_db` has not been called yet.
     """
-    if _SessionFactory is None:
+    with _lock:
+        factory = _SessionFactory
+    if factory is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
-    session: Session = _SessionFactory()
+    session: Session = factory()
     try:
         yield session
         session.commit()
