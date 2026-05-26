@@ -11,7 +11,11 @@ Public surface:
   clean exit and rolls back on exception.
 """
 from .models import Direction, LanguagePair, Repetition, Word
-from .repository import LanguagePairRepository, RepetitionRepository, WordRepository
+from .repositories import (
+    LanguagePairRepository,
+    RepetitionRepository,
+    WordRepository,
+)
 from .session import get_session, init_db
 
 __all__ = [
