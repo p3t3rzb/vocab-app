@@ -1,9 +1,9 @@
 """Batched scheduler: persist ``next_repetition_at`` for every word.
 
 Words are processed in chunks of :attr:`ScheduleConfig.chunk_size`. Within
-each chunk the full threshold search (initial check → doubling → bisect →
-polynomial refinement) is vectorised via batched LSTM calls — roughly
-``20`` model forwards per chunk instead of one per word.
+each chunk the full threshold search (initial check → doubling → bisect) is
+vectorised via batched LSTM calls — roughly ``20`` model forwards per chunk
+instead of one per word.
 """
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from src.database import Direction, get_session
 from src.database.models import Repetition, Word
 from src.model.checkpoint import load_model
 from src.model.config import PredictConfig, ScheduleConfig
-from src.model.inference.polynomial import PolynomialRefiner
 from src.model.inference.search import SearchTask
 from src.model.lstm import RecallLSTM
 
@@ -41,7 +40,6 @@ class BatchScheduler:
         self._predict_cfg = predict_cfg
         self._schedule_cfg = schedule_cfg
         self._device = next(model.parameters()).device
-        self._refiner = PolynomialRefiner(predict_cfg.poly_degree)
 
     def run(
         self,
@@ -120,7 +118,6 @@ class BatchScheduler:
         bisect: list[SearchTask] = []
 
         for task, p in zip(tasks, probs):
-            task.points.append((1.0, p))
             if p < threshold:
                 results[(task.word_id, task.direction)] = task.last_ts
             else:
@@ -135,7 +132,6 @@ class BatchScheduler:
 
             next_doubling: list[SearchTask] = []
             for task, p in zip(doubling, probs):
-                task.points.append((task.hi, p))
                 if p >= threshold:
                     task.lo = task.hi
                     task.hi *= 2
@@ -156,24 +152,13 @@ class BatchScheduler:
             deltas = [(t.lo + t.hi) / 2 for t in bisect]
             probs = self._batch_probe(bisect, deltas)
             for task, delta, p in zip(bisect, deltas, probs):
-                task.points.append((delta, p))
                 if p >= threshold:
                     task.lo = delta
                 else:
                     task.hi = delta
 
-        # Stage 4: polynomial refinement
         for task in bisect:
-            binary_result = task.hi
-            poly_result = self._refiner.crossing(
-                task.points, threshold, reference_log_delta=math.log(binary_result + 1)
-            )
-            if poly_result is None or poly_result <= 0 or not math.isfinite(poly_result):
-                delta = binary_result
-            else:
-                poly_result = max(1.0, min(poly_result, cfg.max_delta_seconds))
-                delta = math.sqrt(binary_result * poly_result)
-            results[(task.word_id, task.direction)] = task.last_ts + int(delta)
+            results[(task.word_id, task.direction)] = task.last_ts + int(task.hi)
 
         chunk_results: dict[int, tuple[int | None, int | None]] = {}
         for word in words:

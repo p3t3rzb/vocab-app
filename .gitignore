@@ -13,3 +13,5 @@ wheels/
 CLAUDE.md
 
 storage/
+
+tests/

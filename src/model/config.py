@@ -4,6 +4,7 @@ Keeping these in one place makes it easy to share defaults between the CLI
 trainer, the GUI training screen, the prediction code paths, and the batched
 scheduler.
 """
+
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,7 +35,7 @@ class TrainConfig:
     """
 
     epochs: int = 100
-    hidden_size: int = 16
+    hidden_size: int = 256
     num_layers: int = 2
     dropout: float = 0.2
     lr: float = 1e-3
@@ -59,8 +60,6 @@ class PredictConfig:
         initial_delta_seconds: Starting upper-bound guess for the doubling
             phase (default 1 day).
         max_delta_seconds: Hard cap on the predicted interval (default 1 year).
-        poly_degree: Degree of the polynomial fitted to probed points to
-            refine the threshold-crossing estimate.
         max_doubling_iters: Safety bound on the doubling phase — caps how many
             times ``hi`` may double before we conclude the threshold is
             unreachable within ``max_delta_seconds``.
@@ -69,8 +68,7 @@ class PredictConfig:
     recall_threshold: float = 0.8
     bisect_steps: int = 16
     initial_delta_seconds: float = 86_400.0  # 1 day starting upper-bound guess
-    max_delta_seconds: float = 31_536_000.0  # 1-year cap
-    poly_degree: int = 2
+    max_delta_seconds: float = 63_072_000.0  # 2-year cap
     max_doubling_iters: int = 30
 
 
