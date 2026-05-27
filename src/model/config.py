@@ -50,26 +50,20 @@ class TrainConfig:
 
 @dataclass
 class PredictConfig:
-    """Prediction-time hyperparameters for the threshold-crossing search.
+    """Prediction-time hyperparameters for the forgetting-curve scheduler.
+
+    The next-review time is found by inverting the predicted forgetting curve
+    analytically (see :func:`src.model.curve.next_delta`), so only the recall
+    threshold and the hard interval cap are needed.
 
     Attributes:
         recall_threshold: P(recall) level below which a word is due for review.
             Lower thresholds → longer intervals between repetitions.
-        bisect_steps: Number of binary-search iterations performed after the
-            initial bracketing phase.
-        initial_delta_seconds: Starting upper-bound guess for the doubling
-            phase (default 1 day).
-        max_delta_seconds: Hard cap on the predicted interval (default 1 year).
-        max_doubling_iters: Safety bound on the doubling phase — caps how many
-            times ``hi`` may double before we conclude the threshold is
-            unreachable within ``max_delta_seconds``.
+        max_delta_seconds: Hard cap on the predicted interval (default 2 years).
     """
 
     recall_threshold: float = 0.8
-    bisect_steps: int = 16
-    initial_delta_seconds: float = 86_400.0  # 1 day starting upper-bound guess
     max_delta_seconds: float = 63_072_000.0  # 2-year cap
-    max_doubling_iters: int = 30
 
 
 @dataclass

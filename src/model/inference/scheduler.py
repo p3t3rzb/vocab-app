@@ -1,9 +1,9 @@
 """Batched scheduler: persist ``next_repetition_at`` for every word.
 
-Words are processed in chunks of :attr:`ScheduleConfig.chunk_size`. Within
-each chunk the full threshold search (initial check → doubling → bisect) is
-vectorised via batched LSTM calls — roughly ``20`` model forwards per chunk
-instead of one per word.
+Words are processed in chunks of :attr:`ScheduleConfig.chunk_size`. Within each
+chunk every (word, direction) history is forwarded through the model in a single
+batched call to get its forgetting-curve parameters, and the next-review time is
+then computed analytically by inverting the curve (no bisection).
 """
 from __future__ import annotations
 
@@ -20,14 +20,14 @@ from src.database import Direction, get_session
 from src.database.models import Repetition, Word
 from src.model.checkpoint import load_model
 from src.model.config import PredictConfig, ScheduleConfig
-from src.model.inference.search import SearchTask
+from src.model.curve import split_params
 from src.model.lstm import RecallLSTM
 
 ProgressFn = Callable[[int, int], None]
 
 
 class BatchScheduler:
-    """Run the threshold search across every word in the active database in batched form."""
+    """Compute every word's next-review time from the model in batched form."""
 
     def __init__(
         self,
@@ -82,83 +82,32 @@ class BatchScheduler:
         words: list[Word],
         reps_map: dict[tuple[int, int], list[Repetition]],
     ) -> dict[int, tuple[int | None, int | None]]:
-        """Run the full search vectorised over every (word, direction) task in the chunk.
+        """Forward every (word, direction) history once and invert the curve analytically.
 
         Returns ``{word_id: (fwd_ts, rev_ts)}``. Words with no history in
         either direction are omitted entirely so existing DB values stay untouched.
         """
-        cfg = self._predict_cfg
-        threshold = cfg.recall_threshold
-
-        results: dict[tuple[int, int], int] = {}
-        tasks: list[SearchTask] = []
+        keys: list[tuple[int, int]] = []
+        sequences: list[list[list[float]]] = []
+        last_ts: list[int] = []
 
         for word in words:
             for direction in Direction:
                 reps = reps_map.get((word.id, int(direction)), [])
                 if not reps:
                     continue
-                tasks.append(
-                    SearchTask(
-                        word_id=word.id,
-                        direction=int(direction),
-                        base_seq=self._make_base_seq(reps),
-                        last_remembered=float(reps[-1].remembered),
-                        last_ts=reps[-1].practiced_at,
-                        hi=cfg.initial_delta_seconds,
-                    )
-                )
+                keys.append((word.id, int(direction)))
+                sequences.append(self._history_rows(reps))
+                last_ts.append(reps[-1].practiced_at)
 
-        if not tasks:
+        if not keys:
             return {}
 
-        # Stage 1: due-now check at Δ=1s
-        probs = self._batch_probe(tasks, [1.0] * len(tasks))
-        doubling: list[SearchTask] = []
-        bisect: list[SearchTask] = []
+        deltas = self._next_deltas(sequences)
 
-        for task, p in zip(tasks, probs):
-            if p < threshold:
-                results[(task.word_id, task.direction)] = task.last_ts
-            else:
-                doubling.append(task)
-
-        # Stage 2: doubling — find an upper bracket for each remaining task
-        for _ in range(cfg.max_doubling_iters):
-            if not doubling:
-                break
-            deltas = [t.hi for t in doubling]
-            probs = self._batch_probe(doubling, deltas)
-
-            next_doubling: list[SearchTask] = []
-            for task, p in zip(doubling, probs):
-                if p >= threshold:
-                    task.lo = task.hi
-                    task.hi *= 2
-                    if task.hi > cfg.max_delta_seconds:
-                        results[(task.word_id, task.direction)] = (
-                            task.last_ts + int(cfg.max_delta_seconds)
-                        )
-                    else:
-                        next_doubling.append(task)
-                else:
-                    bisect.append(task)
-            doubling = next_doubling
-
-        # Stage 3: bisect — N binary-search steps across all bracketed tasks
-        for _ in range(cfg.bisect_steps):
-            if not bisect:
-                break
-            deltas = [(t.lo + t.hi) / 2 for t in bisect]
-            probs = self._batch_probe(bisect, deltas)
-            for task, delta, p in zip(bisect, deltas, probs):
-                if p >= threshold:
-                    task.lo = delta
-                else:
-                    task.hi = delta
-
-        for task in bisect:
-            results[(task.word_id, task.direction)] = task.last_ts + int(task.hi)
+        results: dict[tuple[int, int], int] = {}
+        for (word_id, direction), ts, delta in zip(keys, last_ts, deltas):
+            results[(word_id, direction)] = ts + int(delta)
 
         chunk_results: dict[int, tuple[int | None, int | None]] = {}
         for word in words:
@@ -170,33 +119,35 @@ class BatchScheduler:
         return chunk_results
 
     @staticmethod
-    def _make_base_seq(reps: list[Repetition]) -> list[list[float]]:
-        """Build LSTM input rows for a rep history, excluding the probe timestep."""
-        base: list[list[float]] = []
-        for i in range(1, len(reps)):
-            dt = reps[i].practiced_at - reps[i - 1].practiced_at
-            base.append([math.log(dt + 1), float(reps[i - 1].remembered)])
-        return base
+    def _history_rows(reps: list[Repetition]) -> list[list[float]]:
+        """History-only LSTM input: ``[log(gap-before-this-rep + 1), remembered]`` per rep."""
+        rows: list[list[float]] = []
+        for i, rep in enumerate(reps):
+            log_gap = 0.0 if i == 0 else math.log(rep.practiced_at - reps[i - 1].practiced_at + 1)
+            rows.append([log_gap, float(rep.remembered)])
+        return rows
 
-    def _batch_probe(self, tasks: list[SearchTask], deltas: list[float]) -> list[float]:
-        """Single batched LSTM forward over all tasks at their respective probe deltas."""
-        sequences: list[list[list[float]]] = []
-        lengths: list[int] = []
-
-        for task, delta in zip(tasks, deltas):
-            seq = task.base_seq + [[math.log(delta + 1), task.last_remembered]]
-            sequences.append(seq)
-            lengths.append(len(seq))
-
+    def _next_deltas(self, sequences: list[list[list[float]]]) -> list[float]:
+        """Batched forward + vectorised analytic curve inversion → seconds per task."""
+        lengths = [len(s) for s in sequences]
         max_len = max(lengths)
         batch = torch.zeros(len(sequences), max_len, 2, dtype=torch.float32, device=self._device)
         for i, seq in enumerate(sequences):
             batch[i, : lengths[i]] = torch.tensor(seq, dtype=torch.float32)
 
         with torch.inference_mode():
-            probs = self._model(batch)  # (B, max_len)
+            raw = self._model(batch)  # (B, max_len, 3)
 
-        return [probs[i, lengths[i] - 1].item() for i in range(len(sequences))]
+        idx = torch.tensor([n - 1 for n in lengths], device=self._device)
+        raw_last = raw[torch.arange(len(sequences), device=self._device), idx]  # (B, 3)
+
+        cfg = self._predict_cfg
+        p0, s, d = split_params(raw_last)
+        delta = s * (torch.pow(p0 / cfg.recall_threshold, 1.0 / d) - 1.0)
+        delta = torch.where(p0 <= cfg.recall_threshold, torch.zeros_like(delta), delta)
+        delta = delta.clamp(0.0, cfg.max_delta_seconds)
+        delta = torch.nan_to_num(delta, nan=cfg.max_delta_seconds, posinf=cfg.max_delta_seconds)
+        return delta.tolist()
 
     @staticmethod
     def _persist(chunk_updates: dict[int, tuple[int | None, int | None]]) -> None:

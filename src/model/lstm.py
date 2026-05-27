@@ -1,7 +1,14 @@
 """The :class:`RecallLSTM` network definition.
 
-A small 2-layer LSTM whose per-step output is a single sigmoid — interpreted
-as ``P(remembered)`` at that timestep.
+A small 2-layer LSTM that predicts, at each step in a repetition sequence, the
+*parameters of a forgetting curve* ``R(Δt) = p0·(1 + Δt/S)**(−d)`` (see
+:mod:`src.model.curve`) rather than ``P(remembered)`` directly. Recall
+probability is obtained by evaluating that curve at the queried gap, and the
+next-review time is found by inverting the curve analytically.
+
+Because the curve must be a clean, invertible function of the gap, the network
+is fed the repetition *history only* — never the gap being queried — so its
+three raw outputs depend on past events alone.
 """
 
 import torch
@@ -9,15 +16,16 @@ import torch.nn as nn
 
 
 class RecallLSTM(nn.Module):
-    """Predicts ``P(remembered)`` at each step in a repetition sequence.
+    """Predicts forgetting-curve parameters at each step in a repetition sequence.
 
-    Input per timestep is ``[log(Δt + 1), prev_remembered]``: the log-time
-    elapsed since the previous repetition (in seconds) and whether that
-    previous attempt was successful.
+    Input per timestep is ``[log(Δt_prev + 1), prev_remembered]``: the log-time
+    elapsed before the *previous* repetition and whether that attempt was
+    successful (the history-only, gap-shifted input). The output is three raw
+    channels per step, turned into ``(p0, S, d)`` by :mod:`src.model.curve`.
     """
 
     def __init__(
-        self, hidden_size: int = 512, num_layers: int = 2, dropout: float = 0.2
+        self, hidden_size: int = 256, num_layers: int = 2, dropout: float = 0.2
     ):
         """Build the network.
 
@@ -40,23 +48,23 @@ class RecallLSTM(nn.Module):
             batch_first=True,
         )
         self.drop = nn.Dropout(dropout)
-        self.head = nn.Linear(hidden_size, 1)
+        self.head = nn.Linear(hidden_size, 3)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass.
 
         Args:
-            x: Padded inputs of shape ``(B, L, 2)``.
+            x: Padded history inputs of shape ``(B, L, 2)``.
 
         Returns:
-            Tensor of shape ``(B, L)`` with ``P(remembered)`` at each step.
-            Values at padded positions are undefined; callers must mask them
-            out using the per-sequence lengths.
+            Raw curve parameters of shape ``(B, L, 3)``. The activations and the
+            curve evaluation live in :func:`src.model.curve.curve_recall`;
+            values at padded positions are undefined and must be masked by the
+            caller using the per-sequence lengths.
         """
         out, _ = self.lstm(x)
         out = self.drop(out)
-        logits = self.head(out).squeeze(-1)
-        return torch.sigmoid(logits)
+        return self.head(out)
 
     def hyperparams(self) -> dict:
         """Return the constructor kwargs needed to rebuild this network.

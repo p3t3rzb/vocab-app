@@ -13,6 +13,7 @@ import torch.nn as nn
 from src.database import LanguagePairRepository, get_session
 from src.model.checkpoint import save_checkpoint
 from src.model.config import TrainConfig
+from src.model.curve import curve_recall
 from src.model.dataset import Sequence, build_sequences, split_sequences
 from src.model.device import get_device
 from src.model.lstm import RecallLSTM
@@ -20,6 +21,25 @@ from src.model.training.batching import bucket_batches
 from src.model.training.loss import masked_bce
 
 EpochCallback = Callable[[int, float, float], None]
+
+
+def _predict(model: RecallLSTM, bx: torch.Tensor) -> torch.Tensor:
+    """Map a batch of dataset inputs to per-step recall probabilities.
+
+    The model consumes the repetition *history only*, so the queried gap is
+    shifted out of its input: ``bx[..., 0] = log(Δt + 1)`` is rolled one step
+    right (first step → 0) to form the LSTM input, while the real gap (recovered
+    as ``expm1(bx[..., 0])``) is the argument the predicted curve is evaluated
+    at. ``bx[..., 1]`` (``prev_remembered``) is already history-aligned.
+    """
+    deltas = torch.expm1(bx[..., 0])  # (B, L) raw seconds since previous rep
+
+    x_hist = torch.empty_like(bx)
+    x_hist[:, 0, 0] = 0.0
+    x_hist[:, 1:, 0] = bx[:, :-1, 0]
+    x_hist[..., 1] = bx[..., 1]
+
+    return curve_recall(deltas, model(x_hist))
 
 
 class Trainer:
@@ -160,7 +180,7 @@ class Trainer:
                 bx = bx[:, :max_l, :]
                 bt = bt[:, :max_l]
 
-                pred = model(bx)
+                pred = _predict(model, bx)
                 loss = masked_bce(pred, bt, bl)
 
                 if training:

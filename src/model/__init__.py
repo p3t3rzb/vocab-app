@@ -12,6 +12,7 @@ Public surface:
 """
 from src.model.checkpoint import load_model
 from src.model.config import PredictConfig, ScheduleConfig, TrainConfig
+from src.model.curve import curve_recall, next_delta
 from src.model.inference import Predictor, compute_all_schedules
 from src.model.lstm import RecallLSTM
 from src.model.training import Trainer, train
@@ -21,6 +22,8 @@ __all__ = [
     "ScheduleConfig",
     "TrainConfig",
     "RecallLSTM",
+    "curve_recall",
+    "next_delta",
     "load_model",
     "Predictor",
     "Trainer",
