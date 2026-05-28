@@ -3,8 +3,9 @@
 For each (word, direction) pair with ≥2 repetitions, consecutive practice
 events are turned into timesteps:
 
-* ``input  = [log(Δt + 1), prev_remembered]`` — log-time since the previous
-  rep and whether that previous rep was recalled.
+* ``input  = [log(Δt + 1), prev_remembered, prev_not_remembered]`` — log-time
+  since the previous rep and a one-hot encoding of whether that previous rep
+  was recalled.
 * ``target = remembered`` — whether the current rep was recalled.
 
 The train/val split is done at the **word** level (not the sequence level)
@@ -31,8 +32,8 @@ class Sequence:
         direction: Which direction (FORWARD / REVERSE) this sequence represents.
         source_text: Cached source-language text (handy for debugging).
         target_text: Cached target-language text.
-        inputs: Tensor of shape ``(L, 2)`` — ``[log_delta, prev_remembered]``
-            per timestep.
+        inputs: Tensor of shape ``(L, 3)`` —
+            ``[log_delta, prev_remembered, prev_not_remembered]`` per timestep.
         targets: Tensor of shape ``(L,)`` — recall outcome at each timestep.
     """
 
@@ -40,7 +41,7 @@ class Sequence:
     direction: Direction
     source_text: str
     target_text: str
-    inputs: torch.Tensor   # (L, 2)  [log_delta, prev_remembered]
+    inputs: torch.Tensor   # (L, 3)  [log_delta, prev_remembered, prev_not_remembered]
     targets: torch.Tensor  # (L,)    remembered at each step
 
     @classmethod
@@ -58,7 +59,8 @@ class Sequence:
         targets: list[float] = []
         for i in range(1, len(reps)):
             delta = reps[i].practiced_at - reps[i - 1].practiced_at
-            inputs.append([math.log(delta + 1), float(reps[i - 1].remembered)])
+            prev_rem = float(reps[i - 1].remembered)
+            inputs.append([math.log(delta + 1), prev_rem, 1.0 - prev_rem])
             targets.append(float(reps[i].remembered))
 
         return cls(

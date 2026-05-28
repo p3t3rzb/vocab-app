@@ -30,14 +30,15 @@ def _predict(model: RecallLSTM, bx: torch.Tensor) -> torch.Tensor:
     shifted out of its input: ``bx[..., 0] = log(Δt + 1)`` is rolled one step
     right (first step → 0) to form the LSTM input, while the real gap (recovered
     as ``expm1(bx[..., 0])``) is the argument the predicted curve is evaluated
-    at. ``bx[..., 1]`` (``prev_remembered``) is already history-aligned.
+    at. ``bx[..., 1:]`` (one-hot ``[prev_remembered, prev_not_remembered]``) is
+    already history-aligned.
     """
     deltas = torch.expm1(bx[..., 0])  # (B, L) raw seconds since previous rep
 
     x_hist = torch.empty_like(bx)
     x_hist[:, 0, 0] = 0.0
     x_hist[:, 1:, 0] = bx[:, :-1, 0]
-    x_hist[..., 1] = bx[..., 1]
+    x_hist[..., 1:] = bx[..., 1:]
 
     return curve_recall(deltas, model(x_hist))
 
@@ -90,8 +91,9 @@ class Trainer:
         ckpt_path = cfg.checkpoint_dir / f"{pair_name}.pt"
         best_val = math.inf
         best_epoch = 0
-        if cfg.warm_start:
-            best_val = self._maybe_warm_start(model, ckpt_path)
+        if cfg.warm_start and self._maybe_warm_start(model, ckpt_path):
+            best_val = self._run_epoch(model, vl_inputs, vl_targets, vl_lengths, None)
+            print(f"Warm start: val loss on current split = {best_val:.5f}")
 
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -130,19 +132,20 @@ class Trainer:
 
         return ckpt_path
 
-    def _maybe_warm_start(self, model: RecallLSTM, ckpt_path: Path) -> float:
+    def _maybe_warm_start(self, model: RecallLSTM, ckpt_path: Path) -> bool:
         """Resume training from an existing checkpoint if one is compatible.
 
         Loads ``ckpt_path`` (if present), and — only when its saved
         ``hyperparams`` match this run's architecture — copies its weights into
-        ``model`` in place. Returns the checkpoint's recorded ``val_loss`` so
-        the epoch loop only overwrites the file on a genuine improvement;
-        returns ``math.inf`` when no compatible checkpoint was loaded (so the
-        run behaves like training from scratch).
+        ``model`` in place. Returns ``True`` if weights were loaded. The
+        checkpoint's recorded ``val_loss`` is not reused as the baseline: it
+        was measured on a different val split (the underlying repetition data
+        may have changed since the checkpoint was saved), so the caller must
+        re-evaluate val loss on the current split.
         """
         if not ckpt_path.exists():
             print("Warm start: no existing checkpoint — training from scratch.")
-            return math.inf
+            return False
 
         ckpt = torch.load(ckpt_path, map_location=self._device, weights_only=True)
         if ckpt.get("hyperparams") != model.hyperparams():
@@ -151,15 +154,11 @@ class Trainer:
                 f"{ckpt.get('hyperparams')} != config {model.hyperparams()} "
                 "— training from scratch."
             )
-            return math.inf
+            return False
 
         model.load_state_dict(ckpt["state_dict"])
-        prev_val = float(ckpt.get("val_loss", math.inf))
-        print(
-            f"Warm start: resumed from {ckpt_path} "
-            f"(val loss {prev_val:.5f} @ epoch {ckpt.get('epoch', 0) + 1})."
-        )
-        return prev_val
+        print(f"Warm start: resumed weights from {ckpt_path}.")
+        return True
 
     def _pair_name(self) -> str:
         """Resolve the ``<src>_<tgt>`` slug used in the checkpoint filename."""
@@ -179,7 +178,7 @@ class Trainer:
         """
         lengths = [len(s.inputs) for s in sequences]
         max_len = max(lengths)
-        inputs = torch.zeros(len(sequences), max_len, 2)
+        inputs = torch.zeros(len(sequences), max_len, 3)
         targets = torch.zeros(len(sequences), max_len)
         for i, s in enumerate(sequences):
             seq_len = lengths[i]

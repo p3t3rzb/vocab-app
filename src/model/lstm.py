@@ -18,10 +18,11 @@ import torch.nn as nn
 class RecallLSTM(nn.Module):
     """Predicts forgetting-curve parameters at each step in a repetition sequence.
 
-    Input per timestep is ``[log(Δt_prev + 1), prev_remembered]``: the log-time
-    elapsed before the *previous* repetition and whether that attempt was
-    successful (the history-only, gap-shifted input). The output is three raw
-    channels per step, turned into ``(p0, S, d)`` by :mod:`src.model.curve`.
+    Input per timestep is ``[log(Δt_prev + 1), prev_remembered, prev_not_remembered]``:
+    the log-time elapsed before the *previous* repetition and a one-hot encoding
+    of whether that attempt was successful (the history-only, gap-shifted input).
+    The output is three raw channels per step, turned into ``(p0, S, d)`` by
+    :mod:`src.model.curve`.
     """
 
     def __init__(
@@ -41,7 +42,7 @@ class RecallLSTM(nn.Module):
         self.dropout = dropout
 
         self.lstm = nn.LSTM(
-            input_size=2,
+            input_size=3,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0.0,
@@ -54,7 +55,7 @@ class RecallLSTM(nn.Module):
         """Forward pass.
 
         Args:
-            x: Padded history inputs of shape ``(B, L, 2)``.
+            x: Padded history inputs of shape ``(B, L, 3)``.
 
         Returns:
             Raw curve parameters of shape ``(B, L, 3)``. The activations and the

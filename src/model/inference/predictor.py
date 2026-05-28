@@ -41,8 +41,8 @@ class Predictor:
         """Forward the history and return the curve params for the next test.
 
         Builds the history-only input (one row per rep: ``[log(gap-before-this-
-        rep + 1), remembered]``, first row's gap is 0) and returns the raw
-        ``(3,)`` parameter vector from the final timestep.
+        rep + 1), remembered, not_remembered]``, first row's gap is 0) and
+        returns the raw ``(3,)`` parameter vector from the final timestep.
         """
         if not reps:
             raise ValueError("Need at least one historical repetition")
@@ -50,7 +50,8 @@ class Predictor:
         rows: list[list[float]] = []
         for i, rep in enumerate(reps):
             log_gap = 0.0 if i == 0 else math.log(rep.practiced_at - reps[i - 1].practiced_at + 1)
-            rows.append([log_gap, float(rep.remembered)])
+            rem = float(rep.remembered)
+            rows.append([log_gap, rem, 1.0 - rem])
 
         x = torch.tensor(rows, dtype=torch.float32, device=self._device).unsqueeze(0)
         with torch.no_grad():
