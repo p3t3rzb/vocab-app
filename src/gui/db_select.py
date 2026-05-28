@@ -16,10 +16,16 @@ from src.database import count_words, init_db, read_language_pair
 
 from .base_screen import BaseScreen
 from .db_context import DbContext
-from .db_select_util import DbEntry, last_trained_label, safe_db_basename, slugify
+from .db_select_util import (
+    DbEntry,
+    last_trained_label,
+    last_trained_mtime,
+    safe_db_basename,
+    slugify,
+)
 from .dialogs import BaseDialog
 from .theme import Fonts, Paths, WindowSizes
-from .widgets import ColumnSpec, apply_treeview_style, build_tree
+from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_tree
 
 if TYPE_CHECKING:
     from .app import App
@@ -51,16 +57,15 @@ class DatabaseSelectScreen(BaseScreen):
         tree_frame.grid_columnconfigure(0, weight=1)
 
         apply_treeview_style()
-        self._tree, vsb = build_tree(
-            tree_frame,
-            columns=(
-                ColumnSpec("file", "File", 180, 120),
-                ColumnSpec("source", "Source language", 150, 100),
-                ColumnSpec("target", "Target language", 150, 100),
-                ColumnSpec("words", "Words", 70, 60, anchor="e"),
-                ColumnSpec("trained", "Last Trained", 160, 120),
-            ),
+        columns = (
+            ColumnSpec("file", "File", 180, 120, sort_key=lambda e: e.db_path.name.lower()),
+            ColumnSpec("source", "Source language", 150, 100, sort_key=lambda e: e.src_lang.lower()),
+            ColumnSpec("target", "Target language", 150, 100, sort_key=lambda e: e.tgt_lang.lower()),
+            ColumnSpec("words", "Words", 70, 60, anchor="e", sort_key=lambda e: e.word_count),
+            ColumnSpec("trained", "Last Trained", 160, 120, sort_key=lambda e: e.trained_mtime),
         )
+        self._tree, vsb = build_tree(tree_frame, columns=columns)
+        self._sorter = TreeSorter(self._tree, columns, on_change=self._render)
         self._tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
 
@@ -74,25 +79,44 @@ class DatabaseSelectScreen(BaseScreen):
         ctk.CTkButton(btn_frame, text="Open", width=100, command=self._open_selected).pack(side="left", padx=4)
 
     def _load_databases(self) -> None:
-        """Re-scan ``storage/`` and populate the treeview from scratch."""
-        self._tree.delete(*self._tree.get_children())
+        """Re-scan ``storage/`` into the backing entry list, then render."""
         self._db_entries.clear()
 
-        if not Paths.STORAGE_DIR.exists():
-            return
+        if Paths.STORAGE_DIR.exists():
+            for db_path in sorted(Paths.STORAGE_DIR.glob("*.db")):
+                pair = read_language_pair(db_path)
+                if pair is None:
+                    continue
+                src, tgt = pair
+                self._db_entries.append(
+                    DbEntry(
+                        db_path=db_path,
+                        src_lang=src,
+                        tgt_lang=tgt,
+                        word_count=count_words(db_path),
+                        trained_mtime=last_trained_mtime(src, tgt),
+                    )
+                )
 
-        for db_path in sorted(Paths.STORAGE_DIR.glob("*.db")):
-            pair = read_language_pair(db_path)
-            if pair is None:
-                continue
-            src, tgt = pair
-            count = count_words(db_path)
-            trained = last_trained_label(src, tgt)
-            self._db_entries.append(DbEntry(db_path=db_path, src_lang=src, tgt_lang=tgt))
+        self._render()
+
+    def _render(self) -> None:
+        """(Re)populate the treeview from the cached entries in the current sort order."""
+        self._db_entries = self._sorter.order(self._db_entries)
+
+        self._tree.delete(*self._tree.get_children())
+        for entry in self._db_entries:
+            trained = last_trained_label(entry.src_lang, entry.tgt_lang)
             self._tree.insert(
                 "",
                 "end",
-                values=(db_path.name, src, tgt, f"{count:,}", trained),
+                values=(
+                    entry.db_path.name,
+                    entry.src_lang,
+                    entry.tgt_lang,
+                    f"{entry.word_count:,}",
+                    trained,
+                ),
             )
 
     def _new_database(self) -> None:

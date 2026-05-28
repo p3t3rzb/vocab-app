@@ -1,9 +1,8 @@
 """Modal "Add word" / "Edit word" dialog.
 
 Pass ``word=None`` to create a new word, or an existing :class:`Word`
-to edit it. Newly created words start with
-``next_rep_fwd_at = next_rep_rev_at = 0`` so they appear in the next
-practice session before any model has scheduled them.
+to edit it. Newly created words have ``next_rep_*_at`` left ``NULL``;
+the practice queue picks them up via the never-practiced ("new") bucket.
 """
 from __future__ import annotations
 
@@ -109,8 +108,6 @@ class WordEditDialog(BaseDialog):
                         id=new_id,
                         source_text=src_text,
                         target_text=tgt_text,
-                        next_rep_fwd_at=0,
-                        next_rep_rev_at=0,
                     ))
             else:
                 with get_session() as session:

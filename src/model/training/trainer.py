@@ -87,14 +87,16 @@ class Trainer:
             num_layers=cfg.num_layers,
             dropout=cfg.dropout,
         ).to(self._device)
+        ckpt_path = cfg.checkpoint_dir / f"{pair_name}.pt"
+        best_val = math.inf
+        best_epoch = 0
+        if cfg.warm_start:
+            best_val = self._maybe_warm_start(model, ckpt_path)
+
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, patience=cfg.lr_patience, factor=cfg.lr_factor,
         )
-
-        ckpt_path = cfg.checkpoint_dir / f"{pair_name}.pt"
-        best_val = math.inf
-        best_epoch = 0
 
         print(f"\n{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'LR':>10}")
         print("-" * 42)
@@ -127,6 +129,37 @@ class Trainer:
         print(f"Checkpoint saved → {ckpt_path}")
 
         return ckpt_path
+
+    def _maybe_warm_start(self, model: RecallLSTM, ckpt_path: Path) -> float:
+        """Resume training from an existing checkpoint if one is compatible.
+
+        Loads ``ckpt_path`` (if present), and — only when its saved
+        ``hyperparams`` match this run's architecture — copies its weights into
+        ``model`` in place. Returns the checkpoint's recorded ``val_loss`` so
+        the epoch loop only overwrites the file on a genuine improvement;
+        returns ``math.inf`` when no compatible checkpoint was loaded (so the
+        run behaves like training from scratch).
+        """
+        if not ckpt_path.exists():
+            print("Warm start: no existing checkpoint — training from scratch.")
+            return math.inf
+
+        ckpt = torch.load(ckpt_path, map_location=self._device, weights_only=True)
+        if ckpt.get("hyperparams") != model.hyperparams():
+            print(
+                "Warm start: checkpoint architecture "
+                f"{ckpt.get('hyperparams')} != config {model.hyperparams()} "
+                "— training from scratch."
+            )
+            return math.inf
+
+        model.load_state_dict(ckpt["state_dict"])
+        prev_val = float(ckpt.get("val_loss", math.inf))
+        print(
+            f"Warm start: resumed from {ckpt_path} "
+            f"(val loss {prev_val:.5f} @ epoch {ckpt.get('epoch', 0) + 1})."
+        )
+        return prev_val
 
     def _pair_name(self) -> str:
         """Resolve the ``<src>_<tgt>`` slug used in the checkpoint filename."""

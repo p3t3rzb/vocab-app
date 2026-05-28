@@ -14,7 +14,7 @@ from src.database.models import Repetition
 from .base_screen import BaseScreen
 from .formatting import format_timestamp
 from .theme import Fonts
-from .widgets import ColumnSpec, apply_treeview_style, build_header, build_tree
+from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_header, build_tree
 
 if TYPE_CHECKING:
     from .app import App
@@ -32,6 +32,7 @@ class WordDetailScreen(BaseScreen):
 
     def __init__(self, master: App, word_id: int) -> None:
         self._word_id = word_id
+        self._all_reps: list[Repetition] = []
         super().__init__(master)
         self._load()
 
@@ -73,15 +74,16 @@ class WordDetailScreen(BaseScreen):
         tree_frame.grid_columnconfigure(0, weight=1)
 
         apply_treeview_style()
-        self._tree, vsb = build_tree(
-            tree_frame,
-            columns=(
-                ColumnSpec("direction", "Direction", 240, 160),
-                ColumnSpec("date", "Date & Time", 200, 160),
-                ColumnSpec("remembered", "Remembered", 110, 80, anchor="center"),
+        columns = (
+            ColumnSpec("direction", "Direction", 240, 160, sort_key=lambda r: r.direction),
+            ColumnSpec("date", "Date & Time", 200, 160, sort_key=lambda r: r.practiced_at),
+            ColumnSpec(
+                "remembered", "Remembered", 110, 80, anchor="center",
+                sort_key=lambda r: r.remembered,
             ),
-            selectmode="none",
         )
+        self._tree, vsb = build_tree(tree_frame, columns=columns, selectmode="none")
+        self._sorter = TreeSorter(self._tree, columns, on_change=self._render)
         self._tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
 
@@ -102,10 +104,15 @@ class WordDetailScreen(BaseScreen):
                 self._word_id, Direction.REVERSE
             )
 
-        all_reps = sorted(reps_fwd + reps_rev, key=lambda r: r.practiced_at)
+        self._all_reps = sorted(reps_fwd + reps_rev, key=lambda r: r.practiced_at)
+        self._render()
+
+    def _render(self) -> None:
+        """(Re)populate the treeview from the cached reps in the current sort order."""
+        reps = self._sorter.order(self._all_reps)
 
         self._tree.delete(*self._tree.get_children())
-        for rep in all_reps:
+        for rep in reps:
             remembered = "✓" if rep.remembered else "✗"
             self._tree.insert(
                 "",
@@ -117,7 +124,7 @@ class WordDetailScreen(BaseScreen):
                 ),
             )
 
-        count = len(all_reps)
+        count = len(self._all_reps)
         self._rep_label.configure(
             text=f"Repetition history  ({count:,} event{'s' if count != 1 else ''})"
         )

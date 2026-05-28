@@ -17,11 +17,18 @@ _NON_ALPHANUM_RE = re.compile(r"[^a-z0-9]+")
 
 @dataclass(frozen=True, slots=True)
 class DbEntry:
-    """One row in the database-selection treeview."""
+    """One row in the database-selection treeview.
+
+    ``word_count`` and ``trained_mtime`` are carried alongside the identity
+    fields so the row can be sorted on its underlying values (not the
+    formatted cell text). ``trained_mtime`` is ``0.0`` when no checkpoint exists.
+    """
 
     db_path: Path
     src_lang: str
     tgt_lang: str
+    word_count: int = 0
+    trained_mtime: float = 0.0
 
 
 def slugify(value: str) -> str:
@@ -42,9 +49,17 @@ def safe_db_basename(src: str, tgt: str) -> str:
     return f"{src_c}_{tgt_c}"
 
 
-def last_trained_label(src: str, tgt: str) -> str:
-    """Return the checkpoint mtime as a display string, or ``"—"`` if not trained."""
+def last_trained_mtime(src: str, tgt: str) -> float:
+    """Return the checkpoint's mtime as a Unix timestamp, or ``0.0`` if not trained."""
     ckpt = Paths.model_path(src, tgt)
     if not ckpt.exists():
+        return 0.0
+    return ckpt.stat().st_mtime
+
+
+def last_trained_label(src: str, tgt: str) -> str:
+    """Return the checkpoint mtime as a display string, or ``"—"`` if not trained."""
+    mtime = last_trained_mtime(src, tgt)
+    if mtime == 0.0:
         return "—"
-    return datetime.fromtimestamp(ckpt.stat().st_mtime).strftime("%b %d, %Y  %H:%M")
+    return datetime.fromtimestamp(mtime).strftime("%b %d, %Y  %H:%M")

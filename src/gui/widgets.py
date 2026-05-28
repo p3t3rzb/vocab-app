@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from tkinter import ttk
-from typing import Callable, Sequence
+from typing import Any, Callable, Sequence
 
 import customtkinter as ctk
 
@@ -21,13 +21,19 @@ HeaderRight = Callable[[ctk.CTkFrame], ctk.CTkBaseClass]
 
 @dataclass(frozen=True, slots=True)
 class ColumnSpec:
-    """Declarative spec for one column in :func:`build_tree`."""
+    """Declarative spec for one column in :func:`build_tree`.
+
+    ``sort_key``, when set, makes the column sortable via :class:`TreeSorter`:
+    it maps a backing row object to the value that column should sort on (the
+    underlying datum, e.g. a timestamp, not the formatted cell text).
+    """
 
     key: str
     heading: str
     width: int
     minwidth: int = 60
     anchor: str | None = None
+    sort_key: Callable[[Any], Any] | None = None
 
 
 class ScreenHeader(ctk.CTkFrame):
@@ -119,6 +125,67 @@ def build_tree(
     scrollbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=scrollbar.set)
     return tree, scrollbar
+
+
+class TreeSorter:
+    """Click-to-sort controller for a :func:`build_tree` treeview.
+
+    Wires a command onto each sortable column heading (those whose
+    :attr:`ColumnSpec.sort_key` is set). Clicking a heading sorts ascending;
+    clicking the same heading again toggles to descending, and an arrow
+    indicator is appended to the active heading.
+
+    Because a treeview only knows display rows, sorting has to happen on the
+    screen's backing list so that row-index → object lookups stay correct.
+    The owning screen calls :meth:`order` while rendering to reorder its list,
+    and passes an ``on_change`` callback that re-runs that render when a
+    heading is clicked.
+    """
+
+    ASCENDING = " ▴"   # ▴
+    DESCENDING = " ▾"  # ▾
+
+    def __init__(
+        self,
+        tree: ttk.Treeview,
+        columns: Sequence[ColumnSpec],
+        *,
+        on_change: Callable[[], None],
+    ) -> None:
+        self._tree = tree
+        self._on_change = on_change
+        self._specs = {c.key: c for c in columns}
+        self._headings = {c.key: c.heading for c in columns}
+        self._active: str | None = None
+        self._reverse = False
+        for col in columns:
+            if col.sort_key is not None:
+                self._tree.heading(col.key, command=lambda k=col.key: self._on_click(k))
+
+    def order(self, items: Sequence[Any]) -> list[Any]:
+        """Return ``items`` reordered by the active sort (a copy if none)."""
+        if self._active is None:
+            return list(items)
+        key = self._specs[self._active].sort_key
+        assert key is not None  # only sortable columns become active
+        return sorted(items, key=key, reverse=self._reverse)
+
+    def _on_click(self, key: str) -> None:
+        if key == self._active:
+            self._reverse = not self._reverse
+        else:
+            self._active = key
+            self._reverse = False
+        self._update_arrows()
+        self._on_change()
+
+    def _update_arrows(self) -> None:
+        for key, heading in self._headings.items():
+            if key == self._active:
+                arrow = self.DESCENDING if self._reverse else self.ASCENDING
+                self._tree.heading(key, text=heading + arrow)
+            else:
+                self._tree.heading(key, text=heading)
 
 
 def apply_treeview_style() -> None:

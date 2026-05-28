@@ -84,8 +84,9 @@ class BatchScheduler:
     ) -> dict[int, tuple[int | None, int | None]]:
         """Forward every (word, direction) history once and invert the curve analytically.
 
-        Returns ``{word_id: (fwd_ts, rev_ts)}``. Words with no history in
-        either direction are omitted entirely so existing DB values stay untouched.
+        Returns ``{word_id: (fwd_ts, rev_ts)}`` for every word in the chunk.
+        Directions with no history yield ``None``, which the persistence step
+        writes as SQL ``NULL`` so the list shows "–" until the word is practiced.
         """
         keys: list[tuple[int, int]] = []
         sequences: list[list[list[float]]] = []
@@ -100,23 +101,19 @@ class BatchScheduler:
                 sequences.append(self._history_rows(reps))
                 last_ts.append(reps[-1].practiced_at)
 
-        if not keys:
-            return {}
-
-        deltas = self._next_deltas(sequences)
-
         results: dict[tuple[int, int], int] = {}
-        for (word_id, direction), ts, delta in zip(keys, last_ts, deltas):
-            results[(word_id, direction)] = ts + int(delta)
+        if keys:
+            deltas = self._next_deltas(sequences)
+            for (word_id, direction), ts, delta in zip(keys, last_ts, deltas):
+                results[(word_id, direction)] = ts + int(delta)
 
-        chunk_results: dict[int, tuple[int | None, int | None]] = {}
-        for word in words:
-            fwd_ts = results.get((word.id, int(Direction.FORWARD)))
-            rev_ts = results.get((word.id, int(Direction.REVERSE)))
-            if fwd_ts is None and rev_ts is None:
-                continue
-            chunk_results[word.id] = (fwd_ts, rev_ts)
-        return chunk_results
+        return {
+            word.id: (
+                results.get((word.id, int(Direction.FORWARD))),
+                results.get((word.id, int(Direction.REVERSE))),
+            )
+            for word in words
+        }
 
     @staticmethod
     def _history_rows(reps: list[Repetition]) -> list[list[float]]:
@@ -151,18 +148,18 @@ class BatchScheduler:
 
     @staticmethod
     def _persist(chunk_updates: dict[int, tuple[int | None, int | None]]) -> None:
-        """Write per-direction due-times for a chunk of words in one short session."""
+        """Write per-direction due-times for a chunk of words in one short session.
+
+        ``None`` is written as SQL ``NULL`` so directions with no repetition
+        history get cleared (and rendered as "–" in the word list).
+        """
         with get_session() as session:
             for word_id, (fwd_ts, rev_ts) in chunk_updates.items():
-                vals: dict[str, int] = {}
-                if fwd_ts is not None:
-                    vals["next_rep_fwd_at"] = fwd_ts
-                if rev_ts is not None:
-                    vals["next_rep_rev_at"] = rev_ts
-                if vals:
-                    session.execute(
-                        sa_update(Word).where(Word.id == word_id).values(**vals)
-                    )
+                session.execute(
+                    sa_update(Word)
+                    .where(Word.id == word_id)
+                    .values(next_rep_fwd_at=fwd_ts, next_rep_rev_at=rev_ts)
+                )
 
 
 def compute_all_schedules(

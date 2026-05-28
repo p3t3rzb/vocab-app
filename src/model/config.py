@@ -32,20 +32,25 @@ class TrainConfig:
             ``ReduceLROnPlateau`` fires.
         grad_clip_max_norm: Global gradient-norm cap applied before each
             optimizer step (``torch.nn.utils.clip_grad_norm_``).
+        warm_start: When ``True`` (default), resume from the existing
+            ``<src>_<tgt>.pt`` checkpoint if one is present and its
+            architecture matches this config. On a mismatch (or no
+            checkpoint), training falls back to a fresh random init.
     """
 
     epochs: int = 100
     hidden_size: int = 256
     num_layers: int = 2
-    dropout: float = 0.2
-    lr: float = 1e-3
-    batch_size: int = 256
+    dropout: float = 0.3
+    lr: float = 3e-03
+    batch_size: int = 128
     val_split: float = 0.2
     seed: int = 42
     checkpoint_dir: Path = field(default_factory=lambda: Path("storage") / "models")
     lr_patience: int = 5
     lr_factor: float = 0.5
     grad_clip_max_norm: float = 1.0
+    warm_start: bool = True
 
 
 @dataclass

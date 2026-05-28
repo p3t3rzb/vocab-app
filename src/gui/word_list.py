@@ -16,7 +16,12 @@ from src.database.models import Word
 from .base_screen import BaseScreen
 from .formatting import format_due
 from .theme import Colors, Fonts
-from .widgets import ColumnSpec, apply_treeview_style, build_header, build_tree
+from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_header, build_tree
+
+
+def _due_sort_key(ts: int | None) -> tuple[bool, int]:
+    """Sort key for a nullable due timestamp: untrained (``None``) rows sort last."""
+    return (ts is None, ts or 0)
 
 if TYPE_CHECKING:
     from .app import App
@@ -103,15 +108,26 @@ class WordListScreen(BaseScreen):
         apply_treeview_style()
         src3 = self._ctx.src_lang[:3]
         tgt3 = self._ctx.tgt_lang[:3]
-        self._tree, vsb = build_tree(
-            tree_frame,
-            columns=(
-                ColumnSpec("source", self._ctx.src_lang, 240, 100),
-                ColumnSpec("target", self._ctx.tgt_lang, 240, 100),
-                ColumnSpec("fwd_due", f"{src3}→{tgt3}", 110, 70),
-                ColumnSpec("rev_due", f"{tgt3}→{src3}", 110, 70),
+        columns = (
+            ColumnSpec(
+                "source", self._ctx.src_lang, 240, 100,
+                sort_key=lambda w: w.source_text.lower(),
+            ),
+            ColumnSpec(
+                "target", self._ctx.tgt_lang, 240, 100,
+                sort_key=lambda w: w.target_text.lower(),
+            ),
+            ColumnSpec(
+                "fwd_due", f"{src3}→{tgt3}", 110, 70,
+                sort_key=lambda w: _due_sort_key(w.next_rep_fwd_at),
+            ),
+            ColumnSpec(
+                "rev_due", f"{tgt3}→{src3}", 110, 70,
+                sort_key=lambda w: _due_sort_key(w.next_rep_rev_at),
             ),
         )
+        self._tree, vsb = build_tree(tree_frame, columns=columns)
+        self._sorter = TreeSorter(self._tree, columns, on_change=self._apply_filter)
         self._tree.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
 
@@ -138,6 +154,8 @@ class WordListScreen(BaseScreen):
             ]
         else:
             self._filtered = list(self._all_words)
+
+        self._filtered = self._sorter.order(self._filtered)
 
         self._tree.delete(*self._tree.get_children())
         for word in self._filtered:
