@@ -26,7 +26,7 @@ class Repetition(BaseORM):
     __tablename__ = "repetitions"
     __table_args__ = (Index("ix_repetitions_word_direction", "word_id", "direction"),)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     word_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("words.id", ondelete="CASCADE"), nullable=False
     )

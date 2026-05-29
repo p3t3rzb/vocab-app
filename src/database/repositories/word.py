@@ -1,5 +1,5 @@
 """CRUD helpers for :class:`Word`."""
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from ..models import Word
 from .base import BaseRepository
@@ -29,13 +29,3 @@ class WordRepository(BaseRepository):
     def delete(self, word: Word) -> None:
         """Stage ``word`` for deletion. Repetitions cascade automatically."""
         self._session.delete(word)
-
-    def get_next_id(self) -> int:
-        """Return ``max(id) + 1``, or ``0`` if the table is empty.
-
-        Used to assign an id to a newly created word — the schema uses
-        explicit ids (no autoincrement) so the migration row indices remain
-        stable.
-        """
-        max_id = self._session.scalar(select(func.max(Word.id)))
-        return (max_id + 1) if max_id is not None else 0

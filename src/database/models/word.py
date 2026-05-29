@@ -9,8 +9,8 @@ from .repetition import Repetition
 class Word(BaseORM):
     """One vocabulary entry — a source/target text pair plus due timestamps.
 
-    The id is 0-based to match the source spreadsheet row index used by the
-    initial migration.
+    The id is database-assigned (autoincrement). Existing rows imported by the
+    original migration keep their 0-based ids; new words continue from max+1.
 
     Attributes:
         next_rep_fwd_at: Unix timestamp at which the FORWARD direction is next
@@ -23,7 +23,7 @@ class Word(BaseORM):
 
     __tablename__ = "words"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source_text: Mapped[str] = mapped_column(Text, nullable=False)
     target_text: Mapped[str] = mapped_column(Text, nullable=False)
     next_rep_fwd_at: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

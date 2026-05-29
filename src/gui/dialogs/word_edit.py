@@ -103,9 +103,7 @@ class WordEditDialog(BaseDialog):
                             parent=self,
                         )
                         return
-                    new_id = repo.get_next_id()
                     repo.add(Word(
-                        id=new_id,
                         source_text=src_text,
                         target_text=tgt_text,
                     ))
