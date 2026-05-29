@@ -2,8 +2,8 @@
 
 Each card walks through the prompt → answer → saving → result transitions.
 ``LOADING`` is the initial state until the queue is built, and ``DONE`` is
-the terminal state once the queue is empty. ``PracticeStateMachine``
-encapsulates the current state and the legal arrow-key actions per state.
+the terminal state once the queue is empty. ``PracticeState`` holds the
+states; ``ArrowKey`` is the set of arrow keys the screen interprets.
 """
 from __future__ import annotations
 

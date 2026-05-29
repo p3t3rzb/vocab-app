@@ -1,8 +1,8 @@
 """Practice screen view — UI, key handling, and state-machine dispatch.
 
 The screen owns two :class:`BackgroundJob` instances (an init job for the
-queue/model loader, and a per-answer job for predictor calls), plus a
-:class:`PracticeStateMachine` that decides which widgets are visible.
+queue/model loader, and a per-answer job for predictor calls) and tracks a
+:class:`PracticeState` that decides which widgets are visible.
 """
 from __future__ import annotations
 

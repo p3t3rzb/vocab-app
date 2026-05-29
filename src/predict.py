@@ -2,10 +2,10 @@
 Predict the next repetition time for a word using the trained RecallLSTM.
 
 Usage:
-    uv run python -m src.predict --db storage/french.db --word-id 42
-    uv run python -m src.predict --db storage/french.db --word-id 42 --direction reverse
-    uv run python -m src.predict --db storage/french.db --word salut
-    uv run python -m src.predict --db storage/french.db --word salut --history
+    uv run python -m src.predict --db storage/french_polish.db --word-id 42
+    uv run python -m src.predict --db storage/french_polish.db --word-id 42 --direction reverse
+    uv run python -m src.predict --db storage/french_polish.db --word salut
+    uv run python -m src.predict --db storage/french_polish.db --word salut --history
 """
 from __future__ import annotations
 
@@ -98,7 +98,7 @@ def _predict_for_direction(
 def _parse_args() -> argparse.Namespace:
     """Parse CLI flags for the predict script."""
     p = argparse.ArgumentParser(description="Predict next repetition time for a vocabulary word")
-    p.add_argument("--db", required=True, help="Path to the SQLite database, e.g. storage/french.db")
+    p.add_argument("--db", required=True, help="Path to the SQLite database, e.g. storage/french_polish.db")
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--word-id", type=int, help="Word ID")
     group.add_argument("--word", type=str, help="Partial match on source or target text")

@@ -23,7 +23,7 @@ class Word(Base):
 
     __tablename__ = "words"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     source_text: Mapped[str] = mapped_column(Text, nullable=False)
     target_text: Mapped[str] = mapped_column(Text, nullable=False)
     next_rep_fwd_at: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

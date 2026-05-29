@@ -6,7 +6,7 @@ and the :meth:`read` validator that returns an :class:`AppSettings` or
 ``None`` (after surfacing a warning dialog).
 
 The view never touches Tk variables directly — it only calls
-:meth:`read`, :meth:`enable`, and :meth:`disable`.
+:meth:`read`, :meth:`set_enabled`, and the :attr:`appearance` property.
 """
 from __future__ import annotations
 
