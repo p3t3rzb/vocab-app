@@ -12,8 +12,7 @@ from contextlib import contextmanager
 from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from .base import Base
-from .models import LanguagePair
+from .models import BaseORM, LanguagePair
 
 
 class Database:
@@ -58,7 +57,7 @@ class Database:
             connect_args={"check_same_thread": False},
             echo=False,
         )
-        Base.metadata.create_all(engine)
+        BaseORM.metadata.create_all(engine)
         factory = sessionmaker(
             bind=engine,
             autocommit=False,

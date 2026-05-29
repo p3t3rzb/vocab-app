@@ -2,10 +2,10 @@
 from sqlalchemy import Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ..base import Base
+from .base import BaseORM
 
 
-class LanguagePair(Base):
+class LanguagePair(BaseORM):
     """Single-row table identifying the languages stored in this database.
 
     Every database has exactly one language pair row, pinned to

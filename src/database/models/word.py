@@ -2,11 +2,11 @@
 from sqlalchemy import Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ..base import Base
+from .base import BaseORM
 from .repetition import Repetition
 
 
-class Word(Base):
+class Word(BaseORM):
     """One vocabulary entry — a source/target text pair plus due timestamps.
 
     The id is 0-based to match the source spreadsheet row index used by the

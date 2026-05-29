@@ -1,16 +1,17 @@
 """Repetition model — one practice event for a (word, direction) pair."""
+
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Index, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ..base import Base
+from .base import BaseORM
 
 if TYPE_CHECKING:
     from .word import Word
 
 
-class Repetition(Base):
+class Repetition(BaseORM):
     """A single practice event for a (word, direction) pair.
 
     Composite index on ``(word_id, direction)`` keeps the
@@ -23,11 +24,9 @@ class Repetition(Base):
     """
 
     __tablename__ = "repetitions"
-    __table_args__ = (
-        Index("ix_repetitions_word_direction", "word_id", "direction"),
-    )
+    __table_args__ = (Index("ix_repetitions_word_direction", "word_id", "direction"),)
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
     word_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("words.id", ondelete="CASCADE"), nullable=False
     )

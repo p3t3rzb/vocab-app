@@ -7,9 +7,10 @@ The schema is fully described in ``CLAUDE.md``. Briefly:
 * One :class:`Repetition` row per practice event, scoped to a single
   :class:`Direction` (source→target or target→source).
 """
+from .base import BaseORM
 from .direction import Direction
 from .language_pair import LanguagePair
 from .repetition import Repetition
 from .word import Word
 
-__all__ = ["Direction", "LanguagePair", "Repetition", "Word"]
+__all__ = ["BaseORM", "Direction", "LanguagePair", "Repetition", "Word"]
