@@ -63,7 +63,7 @@ def answer_worker(
                 session.flush()
                 all_reps = reps_repo.get_for_word(card.word_id, card.direction)
                 try:
-                    delta = predictor.next_repetition_delta(all_reps)
+                    delta = predictor.next_repetition_delta(all_reps, card.direction)
                     next_ts = practiced_at + int(delta)
                 except Exception:
                     next_ts = 0

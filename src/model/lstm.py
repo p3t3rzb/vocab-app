@@ -18,15 +18,22 @@ import torch.nn as nn
 class RecallLSTM(nn.Module):
     """Predicts forgetting-curve parameters at each step in a repetition sequence.
 
-    Input per timestep is ``[log(Δt_prev + 1), prev_remembered, prev_not_remembered]``:
-    the log-time elapsed before the *previous* repetition and a one-hot encoding
-    of whether that attempt was successful (the history-only, gap-shifted input).
-    The output is three raw channels per step, turned into ``(p0, S, d)`` by
-    :mod:`src.model.curve`.
+    Input per timestep is ``[log(Δt_prev + 1), prev_remembered,
+    prev_not_remembered, is_forward, is_reverse]``: the log-time elapsed before
+    the *previous* repetition, a one-hot encoding of whether that attempt was
+    successful (the history-only, gap-shifted input), and a one-hot encoding of
+    the practice direction. Direction is constant across the sequence but
+    supplied at every step so the LSTM can condition its dynamics on it without
+    relying on the initial state surviving long histories. The output is three
+    raw channels per step, turned into ``(p0, S, d)`` by :mod:`src.model.curve`.
     """
 
     def __init__(
-        self, hidden_size: int = 256, num_layers: int = 2, dropout: float = 0.2
+        self,
+        hidden_size: int = 256,
+        num_layers: int = 2,
+        dropout: float = 0.2,
+        input_size: int = 5,
     ):
         """Build the network.
 
@@ -35,14 +42,18 @@ class RecallLSTM(nn.Module):
             num_layers: Number of stacked LSTM layers.
             dropout: Dropout probability — applied between LSTM layers
                 (only when ``num_layers > 1``) and before the output head.
+            input_size: Number of input features per timestep. Recorded in the
+                checkpoint so older models with a different feature count are
+                rebuilt (and warm-start mismatches detected) correctly.
         """
         super().__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout = dropout
+        self.input_size = input_size
 
         self.lstm = nn.LSTM(
-            input_size=3,
+            input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0.0,
@@ -55,7 +66,7 @@ class RecallLSTM(nn.Module):
         """Forward pass.
 
         Args:
-            x: Padded history inputs of shape ``(B, L, 3)``.
+            x: Padded history inputs of shape ``(B, L, input_size)``.
 
         Returns:
             Raw curve parameters of shape ``(B, L, 3)``. The activations and the
@@ -77,4 +88,5 @@ class RecallLSTM(nn.Module):
             "hidden_size": self.hidden_size,
             "num_layers": self.num_layers,
             "dropout": self.dropout,
+            "input_size": self.input_size,
         }

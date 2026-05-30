@@ -30,8 +30,9 @@ def _predict(model: RecallLSTM, bx: torch.Tensor) -> torch.Tensor:
     shifted out of its input: ``bx[..., 0] = log(Δt + 1)`` is rolled one step
     right (first step → 0) to form the LSTM input, while the real gap (recovered
     as ``expm1(bx[..., 0])``) is the argument the predicted curve is evaluated
-    at. ``bx[..., 1:]`` (one-hot ``[prev_remembered, prev_not_remembered]``) is
-    already history-aligned.
+    at. ``bx[..., 1:]`` (the ``[prev_remembered, prev_not_remembered]`` one-hot
+    plus the constant ``[is_forward, is_reverse]`` direction one-hot) is already
+    history-aligned and copied through unshifted.
     """
     deltas = torch.expm1(bx[..., 0])  # (B, L) raw seconds since previous rep
 
@@ -178,7 +179,8 @@ class Trainer:
         """
         lengths = [len(s.inputs) for s in sequences]
         max_len = max(lengths)
-        inputs = torch.zeros(len(sequences), max_len, 3)
+        n_features = sequences[0].inputs.shape[1] if sequences else 4
+        inputs = torch.zeros(len(sequences), max_len, n_features)
         targets = torch.zeros(len(sequences), max_len)
         for i, s in enumerate(sequences):
             seq_len = lengths[i]

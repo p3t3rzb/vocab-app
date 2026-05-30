@@ -68,10 +68,10 @@ def _predict_for_direction(
     elapsed = time.time() - last_rep.practiced_at
     print(f"  Last practiced: {last_dt.strftime('%Y-%m-%d %H:%M')}  ({_fmt_duration(elapsed)} ago)")
 
-    p_now = predictor.recall_probability(reps, elapsed)
+    p_now = predictor.recall_probability(reps, elapsed, direction)
     print(f"  P(recall now):  {p_now:.3f}")
 
-    delta = predictor.next_repetition_delta(reps)
+    delta = predictor.next_repetition_delta(reps, direction)
     scheduled_ts = last_rep.practiced_at + delta
     scheduled_dt = datetime.fromtimestamp(scheduled_ts)
     print(f"\n  Next repetition in: {_fmt_duration(delta)}")
@@ -84,9 +84,9 @@ def _predict_for_direction(
         print(f"  {'─'*3}  {'─'*12}  {'─'*12}  {'─'*10}  {'─'*10}")
         for i in range(1, len(reps) - 1):
             context = reps[:i]
-            pred_delta = predictor.next_repetition_delta(context)
+            pred_delta = predictor.next_repetition_delta(context, direction)
             actual_delta = reps[i].practiced_at - reps[i - 1].practiced_at
-            p_actual = predictor.recall_probability(context, actual_delta)
+            p_actual = predictor.recall_probability(context, actual_delta, direction)
             remembered = "yes" if reps[i].remembered else "no"
             print(
                 f"  {i:>3}  {_fmt_duration(pred_delta):>12}  "

@@ -98,7 +98,7 @@ class BatchScheduler:
                 if not reps:
                     continue
                 keys.append((word.id, int(direction)))
-                sequences.append(self._history_rows(reps))
+                sequences.append(self._history_rows(reps, direction))
                 last_ts.append(reps[-1].practiced_at)
 
         results: dict[tuple[int, int], int] = {}
@@ -116,20 +116,23 @@ class BatchScheduler:
         }
 
     @staticmethod
-    def _history_rows(reps: list[Repetition]) -> list[list[float]]:
-        """History-only LSTM input: ``[log(gap-before-this-rep + 1), remembered, not_remembered]`` per rep."""
+    def _history_rows(reps: list[Repetition], direction: Direction) -> list[list[float]]:
+        """History-only LSTM input: ``[log(gap-before-this-rep + 1), remembered, not_remembered, is_forward, is_reverse]`` per rep."""
+        is_rev = float(int(direction))
+        is_fwd = 1.0 - is_rev
         rows: list[list[float]] = []
         for i, rep in enumerate(reps):
             log_gap = 0.0 if i == 0 else math.log(rep.practiced_at - reps[i - 1].practiced_at + 1)
             rem = float(rep.remembered)
-            rows.append([log_gap, rem, 1.0 - rem])
+            rows.append([log_gap, rem, 1.0 - rem, is_fwd, is_rev])
         return rows
 
     def _next_deltas(self, sequences: list[list[list[float]]]) -> list[float]:
         """Batched forward + vectorised analytic curve inversion → seconds per task."""
         lengths = [len(s) for s in sequences]
         max_len = max(lengths)
-        batch = torch.zeros(len(sequences), max_len, 3, dtype=torch.float32, device=self._device)
+        n_features = len(sequences[0][0])
+        batch = torch.zeros(len(sequences), max_len, n_features, dtype=torch.float32, device=self._device)
         for i, seq in enumerate(sequences):
             batch[i, : lengths[i]] = torch.tensor(seq, dtype=torch.float32)
 

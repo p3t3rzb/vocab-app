@@ -11,6 +11,7 @@ import math
 
 import torch
 
+from src.database import Direction
 from src.database.models import Repetition
 from src.model.config import PredictConfig
 from src.model.curve import curve_recall, next_delta
@@ -37,45 +38,53 @@ class Predictor:
         """Expose the active prediction config (used by the predict CLI)."""
         return self._config
 
-    def _curve_params(self, reps: list[Repetition]) -> torch.Tensor:
+    def _curve_params(self, reps: list[Repetition], direction: Direction) -> torch.Tensor:
         """Forward the history and return the curve params for the next test.
 
         Builds the history-only input (one row per rep: ``[log(gap-before-this-
-        rep + 1), remembered, not_remembered]``, first row's gap is 0) and
-        returns the raw ``(3,)`` parameter vector from the final timestep.
+        rep + 1), remembered, not_remembered, is_forward, is_reverse]``, first
+        row's gap is 0) and returns the raw ``(3,)`` param vector from the final
+        timestep.
         """
         if not reps:
             raise ValueError("Need at least one historical repetition")
 
+        is_rev = float(int(direction))
+        is_fwd = 1.0 - is_rev
         rows: list[list[float]] = []
         for i, rep in enumerate(reps):
             log_gap = 0.0 if i == 0 else math.log(rep.practiced_at - reps[i - 1].practiced_at + 1)
             rem = float(rep.remembered)
-            rows.append([log_gap, rem, 1.0 - rem])
+            rows.append([log_gap, rem, 1.0 - rem, is_fwd, is_rev])
 
         x = torch.tensor(rows, dtype=torch.float32, device=self._device).unsqueeze(0)
         with torch.no_grad():
             raw = self._model(x)  # (1, L, 3)
         return raw[0, -1]  # (3,)
 
-    def recall_probability(self, reps: list[Repetition], delta_seconds: float) -> float:
+    def recall_probability(
+        self, reps: list[Repetition], delta_seconds: float, direction: Direction
+    ) -> float:
         """Return P(remembered) if the word is tested ``delta_seconds`` after its last rep.
 
         Args:
             reps: Repetition history, oldest first. Must be non-empty.
             delta_seconds: Hypothetical gap (in seconds) after the most recent
                 rep at which to probe the curve.
+            direction: Practice direction the history belongs to.
 
         Raises:
             ValueError: if ``reps`` is empty.
         """
-        raw_last = self._curve_params(reps)
+        raw_last = self._curve_params(reps, direction)
         delta = torch.tensor([[delta_seconds]], dtype=torch.float32, device=self._device)
         return curve_recall(delta, raw_last.view(1, 1, 3)).item()
 
-    def next_repetition_delta(self, reps: list[Repetition]) -> float:
+    def next_repetition_delta(
+        self, reps: list[Repetition], direction: Direction
+    ) -> float:
         """Seconds-until-next-review, by analytically inverting the forgetting curve."""
-        raw_last = self._curve_params(reps)
+        raw_last = self._curve_params(reps, direction)
         return next_delta(
             raw_last, self._config.recall_threshold, self._config.max_delta_seconds
         )
