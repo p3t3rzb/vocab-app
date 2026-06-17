@@ -96,7 +96,9 @@ class Trainer:
             best_val = self._run_epoch(model, vl_inputs, vl_targets, vl_lengths, None)
             print(f"Warm start: val loss on current split = {best_val:.5f}")
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
+        )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, patience=cfg.lr_patience, factor=cfg.lr_factor,
         )

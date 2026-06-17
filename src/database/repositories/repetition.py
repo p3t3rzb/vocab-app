@@ -1,5 +1,5 @@
 """Query and insert helpers for :class:`Repetition`."""
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..models import Direction, Repetition
 from .base import BaseRepository
@@ -32,6 +32,18 @@ class RepetitionRepository(BaseRepository):
             .limit(1)
         )
         return self._session.scalars(stmt).first()
+
+    def latest_practiced_at_by_word(self) -> dict[int, int]:
+        """Map every word_id to its most recent ``practiced_at`` across all directions.
+
+        One aggregate query for the whole table — suitable for rendering the
+        word list's "Last revised" column without a per-word round-trip.
+        """
+        stmt = (
+            select(Repetition.word_id, func.max(Repetition.practiced_at))
+            .group_by(Repetition.word_id)
+        )
+        return {word_id: latest for word_id, latest in self._session.execute(stmt)}
 
     def add(self, repetition: Repetition) -> None:
         """Stage ``repetition`` for insertion on the next commit."""

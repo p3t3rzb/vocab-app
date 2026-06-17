@@ -9,12 +9,14 @@ from __future__ import annotations
 from tkinter import messagebox
 from typing import TYPE_CHECKING
 
+import time
+
 import customtkinter as ctk
 
-from src.database import WordRepository, init_db, get_session
+from src.database import RepetitionRepository, WordRepository, init_db, get_session
 from src.database.models import Word
 from .base_screen import BaseScreen
-from .formatting import format_due
+from .formatting import format_due, format_past
 from .theme import Colors, Fonts
 from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_header, build_tree
 
@@ -22,6 +24,18 @@ from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_header,
 def _due_sort_key(ts: int | None) -> tuple[bool, int]:
     """Sort key for a nullable due timestamp: untrained (``None``) rows sort last."""
     return (ts is None, ts or 0)
+
+
+def _last_revised_sort_key(ts: int | None) -> tuple[bool, int]:
+    """Sort key for a nullable last-revised timestamp: never-revised rows sort last."""
+    return (ts is None, ts or 0)
+
+
+def _format_last_revised(ts: int | None) -> str:
+    """Render a last-revised timestamp as ``"5m ago"`` / ``"2d 3h ago"`` / ``"–"``."""
+    if ts is None:
+        return "–"
+    return format_past(max(0, int(time.time()) - ts))
 
 if TYPE_CHECKING:
     from .app import App
@@ -33,6 +47,7 @@ class WordListScreen(BaseScreen):
     def __init__(self, master: App) -> None:
         self._all_words: list[Word] = []
         self._filtered: list[Word] = []
+        self._last_revised: dict[int, int] = {}
         super().__init__(master)
         init_db(self._ctx.db_url, self._ctx.src_lang, self._ctx.tgt_lang)
         self._load_words()
@@ -125,6 +140,10 @@ class WordListScreen(BaseScreen):
                 "rev_due", f"{tgt3}→{src3}", 110, 70,
                 sort_key=lambda w: _due_sort_key(w.next_rep_rev_at),
             ),
+            ColumnSpec(
+                "last_revised", "Last revised", 130, 90,
+                sort_key=lambda w: _last_revised_sort_key(self._last_revised.get(w.id)),
+            ),
         )
         self._tree, vsb = build_tree(tree_frame, columns=columns)
         self._sorter = TreeSorter(self._tree, columns, on_change=self._apply_filter)
@@ -142,6 +161,7 @@ class WordListScreen(BaseScreen):
         """Load every word from the database and re-render the treeview."""
         with get_session() as session:
             self._all_words = WordRepository(session).get_all()
+            self._last_revised = RepetitionRepository(session).latest_practiced_at_by_word()
         self._apply_filter()
 
     def _apply_filter(self) -> None:
@@ -166,6 +186,7 @@ class WordListScreen(BaseScreen):
                     word.target_text,
                     format_due(word.next_rep_fwd_at),
                     format_due(word.next_rep_rev_at),
+                    _format_last_revised(self._last_revised.get(word.id)),
                 ),
             )
 
