@@ -13,8 +13,11 @@ import time
 
 import customtkinter as ctk
 
-from src.database import RepetitionRepository, WordRepository, init_db, get_session
+from src.database import Direction, RepetitionRepository, WordRepository, init_db, get_session
 from src.database.models import Word
+from src.model.config import PredictConfig
+from src.model.curve import invert_curve
+from src.settings import load_settings
 from .base_screen import BaseScreen
 from .formatting import format_due, format_past
 from .theme import Colors, Fonts
@@ -24,6 +27,38 @@ from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_header,
 def _due_sort_key(ts: int | None) -> tuple[bool, int]:
     """Sort key for a nullable due timestamp: untrained (``None``) rows sort last."""
     return (ts is None, ts or 0)
+
+
+def _due_ts(
+    p0: float | None,
+    s: float | None,
+    d: float | None,
+    last: int | None,
+    cfg: PredictConfig,
+) -> int | None:
+    """Live next-review timestamp from stored curve params, or ``None`` if unknown.
+
+    ``None`` when the direction has no params (not yet computed) or no history.
+    """
+    if p0 is None or s is None or d is None or last is None:
+        return None
+    return last + int(invert_curve(p0, s, d, cfg.recall_threshold, cfg.max_delta_seconds))
+
+
+def _build_due_cache(
+    words: list[Word],
+    last_by_dir: dict[tuple[int, int], int],
+    cfg: PredictConfig,
+) -> dict[int, tuple[int | None, int | None]]:
+    """Compute every word's (fwd_due_ts, rev_due_ts) from stored params, once."""
+    fwd, rev = int(Direction.FORWARD), int(Direction.REVERSE)
+    return {
+        w.id: (
+            _due_ts(w.fwd_p0, w.fwd_s, w.fwd_d, last_by_dir.get((w.id, fwd)), cfg),
+            _due_ts(w.rev_p0, w.rev_s, w.rev_d, last_by_dir.get((w.id, rev)), cfg),
+        )
+        for w in words
+    }
 
 
 def _last_revised_sort_key(ts: int | None) -> tuple[bool, int]:
@@ -48,6 +83,7 @@ class WordListScreen(BaseScreen):
         self._all_words: list[Word] = []
         self._filtered: list[Word] = []
         self._last_revised: dict[int, int] = {}
+        self._due_cache: dict[int, tuple[int | None, int | None]] = {}
         super().__init__(master)
         init_db(self._ctx.db_url, self._ctx.src_lang, self._ctx.tgt_lang)
         self._load_words()
@@ -134,11 +170,11 @@ class WordListScreen(BaseScreen):
             ),
             ColumnSpec(
                 "fwd_due", f"{src3}→{tgt3}", 110, 70,
-                sort_key=lambda w: _due_sort_key(w.next_rep_fwd_at),
+                sort_key=lambda w: _due_sort_key(self._due_cache.get(w.id, (None, None))[0]),
             ),
             ColumnSpec(
                 "rev_due", f"{tgt3}→{src3}", 110, 70,
-                sort_key=lambda w: _due_sort_key(w.next_rep_rev_at),
+                sort_key=lambda w: _due_sort_key(self._due_cache.get(w.id, (None, None))[1]),
             ),
             ColumnSpec(
                 "last_revised", "Last revised", 130, 90,
@@ -158,10 +194,23 @@ class WordListScreen(BaseScreen):
     # ------------------------------------------------------------------
 
     def _load_words(self) -> None:
-        """Load every word from the database and re-render the treeview."""
+        """Load every word from the database and re-render the treeview.
+
+        The per-direction due timestamps are derived from stored curve params and
+        cached on the :class:`App`, so they're computed once per database (and
+        after params/threshold change) rather than on every visit.
+        """
         with get_session() as session:
             self._all_words = WordRepository(session).get_all()
-            self._last_revised = RepetitionRepository(session).latest_practiced_at_by_word()
+            reps_repo = RepetitionRepository(session)
+            self._last_revised = reps_repo.latest_practiced_at_by_word()
+            if self._app.due_cache is None:
+                last_by_dir = reps_repo.latest_practiced_at_by_word_direction()
+                cfg = load_settings().to_predict_config()
+                self._app.set_due_cache(
+                    _build_due_cache(self._all_words, last_by_dir, cfg)
+                )
+        self._due_cache = self._app.due_cache or {}
         self._apply_filter()
 
     def _apply_filter(self) -> None:
@@ -179,13 +228,14 @@ class WordListScreen(BaseScreen):
 
         self._tree.delete(*self._tree.get_children())
         for word in self._filtered:
+            fwd_due, rev_due = self._due_cache.get(word.id, (None, None))
             self._tree.insert(
                 "", "end",
                 values=(
                     word.source_text,
                     word.target_text,
-                    format_due(word.next_rep_fwd_at),
-                    format_due(word.next_rep_rev_at),
+                    format_due(fwd_due),
+                    format_due(rev_due),
                     _format_last_revised(self._last_revised.get(word.id)),
                 ),
             )

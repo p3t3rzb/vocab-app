@@ -36,6 +36,11 @@ class App(ctk.CTk):
 
         self._current_frame: ctk.CTkFrame | None = None
         self._ctx: DbContext | None = None
+        # Word-list due-time cache: {word_id: (fwd_due_ts, rev_due_ts)}. Built
+        # once per database (it's derived from stored curve params, not the
+        # clock) and reused across navigations. ``None`` means "rebuild on next
+        # word-list load"; invalidated when params or the recall threshold change.
+        self._due_cache: dict[int, tuple[int | None, int | None]] | None = None
 
         self.show_db_select()
 
@@ -53,8 +58,31 @@ class App(ctk.CTk):
         return self._ctx
 
     def set_ctx(self, ctx: DbContext) -> None:
-        """Remember ``ctx`` as the active database."""
+        """Remember ``ctx`` as the active database (invalidating the cache on a DB switch)."""
+        if self._ctx is None or self._ctx.db_url != ctx.db_url:
+            self.invalidate_due_cache()
         self._ctx = ctx
+
+    # ------------------------------------------------------------------
+    # Word-list due-time cache
+    # ------------------------------------------------------------------
+
+    @property
+    def due_cache(self) -> dict[int, tuple[int | None, int | None]] | None:
+        """The cached per-word due timestamps, or ``None`` if it needs rebuilding."""
+        return self._due_cache
+
+    def set_due_cache(self, cache: dict[int, tuple[int | None, int | None]]) -> None:
+        """Store a freshly built due-time cache for the active database."""
+        self._due_cache = cache
+
+    def invalidate_due_cache(self) -> None:
+        """Drop the due-time cache so the word list rebuilds it on next load.
+
+        Called whenever the stored curve params or the live recall threshold
+        change (practice answers, training completion, settings save, DB switch).
+        """
+        self._due_cache = None
 
     # ------------------------------------------------------------------
     # Navigation helpers

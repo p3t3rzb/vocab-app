@@ -1,13 +1,14 @@
 """Practice queue data model.
 
-A :class:`Card` is one ``(word, direction)`` pair the user will see during
-a session. The queue is built once on entry: review-due cards first
-(shuffled), then never-practiced cards (shuffled). Cards that the
-predictor still marks due-now after a failed attempt are re-appended
-live.
+A :class:`Card` is one ``(word, direction)`` pair the user will see during a
+session. The queue is a :class:`PracticeQueue` — a min-heap keyed by *live recall
+score* (lower = more likely forgotten = shown first), so due words are practiced
+worst-first. Never-practiced words trail all due ones. A card the predictor still
+marks due-now after a failed attempt is pushed back in at its correct position.
 """
 from __future__ import annotations
 
+import heapq
 import random
 from dataclasses import dataclass
 
@@ -17,6 +18,12 @@ from src.database import (
     WordRepository,
     get_session,
 )
+from src.model.config import PredictConfig
+from src.model.curve import recall_at
+
+# Priority floor for never-practiced ("new") cards: always after any due card,
+# whose recall score lives in (0, 1). The random offset shuffles new cards.
+_NEW_PRIORITY_BASE = 1.0
 
 
 @dataclass(slots=True)
@@ -44,35 +51,86 @@ class Card:
         return f"{tgt_lang} → {src_lang}"
 
 
-def build_queue(now: int) -> list[Card]:
-    """Build the full ``review + new`` practice queue.
+class PracticeQueue:
+    """Min-heap of cards ordered by priority (lower = practiced first).
 
-    Each list is shuffled independently; the concatenation order ensures
-    review cards are always shown before any never-practiced new word.
+    Wraps :mod:`heapq` so both :meth:`push` and :meth:`pop` are ``O(log N)``.
+    Heap entries are ``(priority, seq, card)``; the monotonic ``seq`` counter
+    breaks ties so :class:`Card` instances are never compared directly.
     """
-    review: list[Card] = []
-    new: list[Card] = []
+
+    def __init__(self) -> None:
+        self._heap: list[tuple[float, int, Card]] = []
+        self._seq = 0
+
+    def push(self, card: Card, priority: float) -> None:
+        """Insert ``card`` with the given priority (lower is more urgent)."""
+        heapq.heappush(self._heap, (priority, self._seq, card))
+        self._seq += 1
+
+    def pop(self) -> Card | None:
+        """Remove and return the lowest-priority card, or ``None`` if empty."""
+        if not self._heap:
+            return None
+        return heapq.heappop(self._heap)[2]
+
+    def __len__(self) -> int:
+        return len(self._heap)
+
+
+def _direction_params(word, direction: Direction) -> tuple[float, float, float] | None:
+    """Return the stored ``(p0, S, d)`` curve params for a direction, or ``None``."""
+    if direction is Direction.FORWARD:
+        trio = (word.fwd_p0, word.fwd_s, word.fwd_d)
+    else:
+        trio = (word.rev_p0, word.rev_s, word.rev_d)
+    if any(v is None for v in trio):
+        return None
+    return trio  # type: ignore[return-value]
+
+
+def build_queue(now: int, cfg: PredictConfig) -> PracticeQueue:
+    """Build the practice queue, ordered by live recall score.
+
+    For each (word, direction):
+
+    * **New** (never practiced in that direction) → enqueued after every due
+      card, in random order.
+    * **Due, scored** (has history + stored params, ``recall ≤ threshold``) →
+      enqueued with ``priority = recall`` so the worst-recalled comes first.
+    * **Due, unscored** (history but no params, i.e. no trained model) →
+      enqueued with a random priority in ``[0, 1)`` (can't score it).
+    * **Not due** (scored, ``recall > threshold``) → skipped this session.
+    """
+    queue = PracticeQueue()
     with get_session() as session:
         words = WordRepository(session).get_all()
-        reps_repo = RepetitionRepository(session)
-        for word in words:
-            for direction, due_ts in (
-                (Direction.FORWARD, word.next_rep_fwd_at),
-                (Direction.REVERSE, word.next_rep_rev_at),
-            ):
-                latest = reps_repo.get_latest_for_word(word.id, direction)
-                card = Card(
-                    word_id=word.id,
-                    direction=direction,
-                    source_text=word.source_text,
-                    target_text=word.target_text,
-                    last_practiced=latest.practiced_at if latest else None,
-                )
-                if latest is None:
-                    new.append(card)
-                elif due_ts is None or due_ts <= now:
-                    review.append(card)
+        last_by_dir = RepetitionRepository(session).latest_practiced_at_by_word_direction()
 
-    random.shuffle(review)
-    random.shuffle(new)
-    return review + new
+    for word in words:
+        for direction in Direction:
+            last = last_by_dir.get((word.id, int(direction)))
+            card = Card(
+                word_id=word.id,
+                direction=direction,
+                source_text=word.source_text,
+                target_text=word.target_text,
+                last_practiced=last,
+            )
+            if last is None:
+                # Never practiced in this direction — trails all due cards.
+                queue.push(card, _NEW_PRIORITY_BASE + random.random())
+                continue
+
+            params = _direction_params(word, direction)
+            if params is None:
+                # Has history but no model-computed params — treat as due.
+                queue.push(card, random.random())
+                continue
+
+            p0, s, d = params
+            recall = recall_at(p0, s, d, now - last)
+            if recall <= cfg.recall_threshold:
+                queue.push(card, recall)
+
+    return queue

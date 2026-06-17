@@ -19,7 +19,7 @@ from ..base_screen import BaseScreen
 from ..formatting import format_future, format_past
 from ..theme import Fonts, Hints, PollIntervals, Spacing
 from ..widgets import build_header
-from .queue_model import Card
+from .queue_model import Card, PracticeQueue
 from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
 
@@ -34,8 +34,7 @@ class PracticeScreen(BaseScreen):
 
     def __init__(self, master: App) -> None:
         self._predictor: Predictor | None = None
-        self._cards: list[Card] = []
-        self._idx = 0
+        self._queue: PracticeQueue = PracticeQueue()
         self._answered_count = 0
         self._state: PracticeState = PracticeState.LOADING
         self._current: Card | None = None
@@ -252,7 +251,12 @@ class PracticeScreen(BaseScreen):
         if self._state is PracticeState.LOADING:
             self._stats_var.set("")
             return
-        remaining = max(0, len(self._cards) - self._idx)
+        # The currently-shown card has already been popped off the heap, so add
+        # it back to the count while it's still pending an answer.
+        pending = 1 if self._state in (
+            PracticeState.PROMPT, PracticeState.ANSWER, PracticeState.SAVING
+        ) else 0
+        remaining = len(self._queue) + pending
         if self._state is PracticeState.DONE:
             self._stats_var.set(f"Answered {self._answered_count}")
         else:
@@ -265,12 +269,13 @@ class PracticeScreen(BaseScreen):
     # ------------------------------------------------------------------
 
     def _show_current(self) -> None:
-        """Render the card at ``_idx``, or transition to DONE when exhausted."""
-        if self._idx >= len(self._cards):
+        """Pop and render the next-most-urgent card, or transition to DONE when empty."""
+        card = self._queue.pop()
+        if card is None:
+            self._current = None
             self._set_state(PracticeState.DONE)
             return
 
-        card = self._cards[self._idx]
         self._current = card
 
         self._direction_var.set(card.direction_label(self._ctx.src_lang, self._ctx.tgt_lang))
@@ -308,19 +313,27 @@ class PracticeScreen(BaseScreen):
     # BackgroundJob handlers
     # ------------------------------------------------------------------
 
-    def _on_ready(self, predictor: Predictor | None, cards: list[Card]) -> None:
+    def _on_ready(self, predictor: Predictor | None, queue: PracticeQueue) -> None:
         """Init worker finished — install the queue and show the first card."""
         self._predictor = predictor
-        self._cards = cards
-        self._idx = 0
+        self._queue = queue
         self._show_current()
 
     def _on_init_error(self, msg: str) -> None:
         self._show_error(f"Failed to load practice session: {msg}")
 
-    def _on_answered(self, card: Card, practiced_at: int, next_ts: int | None) -> None:
+    def _on_answered(
+        self,
+        card: Card,
+        practiced_at: int,
+        next_ts: int | None,
+        recall_now: float | None,
+    ) -> None:
         """Answer worker finished — show result and maybe re-queue the card."""
         self._answered_count += 1
+        # This word's stored curve params just changed — the word list's cached
+        # due times are now stale.
+        self._app.invalidate_due_cache()
 
         if next_ts is None:
             self._next_var.set("next repetition: —  (no trained model)")
@@ -329,7 +342,8 @@ class PracticeScreen(BaseScreen):
             self._next_var.set(f"next repetition {format_future(delta)}")
 
         if next_ts is not None and next_ts <= int(time.time()):
-            # Card is still due now — append a refreshed copy to the queue.
+            # Still due right after this attempt — re-queue at its recall-sorted
+            # position so it returns later in the session.
             refreshed = Card(
                 word_id=card.word_id,
                 direction=card.direction,
@@ -337,9 +351,8 @@ class PracticeScreen(BaseScreen):
                 target_text=card.target_text,
                 last_practiced=practiced_at,
             )
-            self._cards.append(refreshed)
+            self._queue.push(refreshed, recall_now if recall_now is not None else 0.0)
 
-        self._idx += 1
         self._set_state(PracticeState.RESULT)
 
     def _on_answer_error(self, msg: str) -> None:

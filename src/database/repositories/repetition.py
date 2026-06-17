@@ -45,6 +45,26 @@ class RepetitionRepository(BaseRepository):
         )
         return {word_id: latest for word_id, latest in self._session.execute(stmt)}
 
+    def latest_practiced_at_by_word_direction(self) -> dict[tuple[int, int], int]:
+        """Map every (word_id, direction) to its most recent ``practiced_at``.
+
+        One aggregate query for the whole table — powers the practice queue
+        builder and the word list's live due-time cache without a per-pair
+        round-trip. Keys are ``(word_id, direction_int)``.
+        """
+        stmt = (
+            select(
+                Repetition.word_id,
+                Repetition.direction,
+                func.max(Repetition.practiced_at),
+            )
+            .group_by(Repetition.word_id, Repetition.direction)
+        )
+        return {
+            (word_id, direction): latest
+            for word_id, direction, latest in self._session.execute(stmt)
+        }
+
     def add(self, repetition: Repetition) -> None:
         """Stage ``repetition`` for insertion on the next commit."""
         self._session.add(repetition)

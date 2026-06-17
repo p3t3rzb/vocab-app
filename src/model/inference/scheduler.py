@@ -1,9 +1,11 @@
-"""Batched scheduler: persist ``next_repetition_at`` for every word.
+"""Batched param computation: persist each word's forgetting-curve params.
 
 Words are processed in chunks of :attr:`ScheduleConfig.chunk_size`. Within each
 chunk every (word, direction) history is forwarded through the model in a single
-batched call to get its forgetting-curve parameters, and the next-review time is
-then computed analytically by inverting the curve (no bisection).
+batched call to get its forgetting-curve parameters ``(p0, S, d)``, which are
+stored on the word. Recall score and the next-review time are derived from these
+params *live* (see :mod:`src.model.curve`), so the recall threshold can change
+without recomputing anything here.
 """
 from __future__ import annotations
 
@@ -19,25 +21,26 @@ from sqlalchemy import select, update as sa_update
 from src.database import Direction, get_session
 from src.database.models import Repetition, Word
 from src.model.checkpoint import load_model
-from src.model.config import PredictConfig, ScheduleConfig
+from src.model.config import ScheduleConfig
 from src.model.curve import split_params
 from src.model.lstm import RecallLSTM
 
 ProgressFn = Callable[[int, int], None]
 
+# A direction's curve params, or None when that direction has no history.
+Params = tuple[float, float, float]
 
-class BatchScheduler:
-    """Compute every word's next-review time from the model in batched form."""
+
+class ParamScheduler:
+    """Compute every word's forgetting-curve params from the model in batched form."""
 
     def __init__(
         self,
         model: RecallLSTM,
-        predict_cfg: PredictConfig,
         schedule_cfg: ScheduleConfig,
     ) -> None:
         self._model = model
         self._model.eval()
-        self._predict_cfg = predict_cfg
         self._schedule_cfg = schedule_cfg
         self._device = next(model.parameters()).device
 
@@ -46,7 +49,7 @@ class BatchScheduler:
         on_progress: ProgressFn | None = None,
         stop_event: threading.Event | None = None,
     ) -> None:
-        """Compute ``next_rep_fwd_at`` / ``next_rep_rev_at`` for every word and persist."""
+        """Compute and persist the per-direction curve params for every word."""
         with get_session() as session:
             all_words = list(session.scalars(select(Word).order_by(Word.id)))
             all_reps = list(
@@ -81,16 +84,15 @@ class BatchScheduler:
         self,
         words: list[Word],
         reps_map: dict[tuple[int, int], list[Repetition]],
-    ) -> dict[int, tuple[int | None, int | None]]:
-        """Forward every (word, direction) history once and invert the curve analytically.
+    ) -> dict[int, tuple[Params | None, Params | None]]:
+        """Forward every (word, direction) history once and read off the curve params.
 
-        Returns ``{word_id: (fwd_ts, rev_ts)}`` for every word in the chunk.
-        Directions with no history yield ``None``, which the persistence step
-        writes as SQL ``NULL`` so the list shows "–" until the word is practiced.
+        Returns ``{word_id: (fwd_params, rev_params)}`` for every word in the
+        chunk. Directions with no history yield ``None``, which the persistence
+        step writes as SQL ``NULL`` so the word stays "not yet computed".
         """
         keys: list[tuple[int, int]] = []
         sequences: list[list[list[float]]] = []
-        last_ts: list[int] = []
 
         for word in words:
             for direction in Direction:
@@ -99,13 +101,12 @@ class BatchScheduler:
                     continue
                 keys.append((word.id, int(direction)))
                 sequences.append(self._history_rows(reps, direction))
-                last_ts.append(reps[-1].practiced_at)
 
-        results: dict[tuple[int, int], int] = {}
+        results: dict[tuple[int, int], Params] = {}
         if keys:
-            deltas = self._next_deltas(sequences)
-            for (word_id, direction), ts, delta in zip(keys, last_ts, deltas):
-                results[(word_id, direction)] = ts + int(delta)
+            params = self._curve_params(sequences)
+            for key, p in zip(keys, params):
+                results[key] = p
 
         return {
             word.id: (
@@ -127,8 +128,8 @@ class BatchScheduler:
             rows.append([log_gap, rem, 1.0 - rem, is_fwd, is_rev])
         return rows
 
-    def _next_deltas(self, sequences: list[list[list[float]]]) -> list[float]:
-        """Batched forward + vectorised analytic curve inversion → seconds per task."""
+    def _curve_params(self, sequences: list[list[list[float]]]) -> list[Params]:
+        """Batched forward → final-timestep ``(p0, S, d)`` per task."""
         lengths = [len(s) for s in sequences]
         max_len = max(lengths)
         n_features = len(sequences[0][0])
@@ -142,38 +143,40 @@ class BatchScheduler:
         idx = torch.tensor([n - 1 for n in lengths], device=self._device)
         raw_last = raw[torch.arange(len(sequences), device=self._device), idx]  # (B, 3)
 
-        cfg = self._predict_cfg
-        p0, s, d = split_params(raw_last)
-        delta = s * (torch.pow(p0 / cfg.recall_threshold, 1.0 / d) - 1.0)
-        delta = torch.where(p0 <= cfg.recall_threshold, torch.zeros_like(delta), delta)
-        delta = delta.clamp(0.0, cfg.max_delta_seconds)
-        delta = torch.nan_to_num(delta, nan=cfg.max_delta_seconds, posinf=cfg.max_delta_seconds)
-        return delta.tolist()
+        p0, s, d = split_params(raw_last)  # each (B,)
+        return list(zip(p0.tolist(), s.tolist(), d.tolist()))
 
     @staticmethod
-    def _persist(chunk_updates: dict[int, tuple[int | None, int | None]]) -> None:
-        """Write per-direction due-times for a chunk of words in one short session.
+    def _persist(chunk_updates: dict[int, tuple[Params | None, Params | None]]) -> None:
+        """Write per-direction curve params for a chunk of words in one short session.
 
-        ``None`` is written as SQL ``NULL`` so directions with no repetition
-        history get cleared (and rendered as "–" in the word list).
+        A ``None`` direction clears its three columns to SQL ``NULL`` (no history
+        yet), so the word list renders "–" until that direction is practiced.
         """
         with get_session() as session:
-            for word_id, (fwd_ts, rev_ts) in chunk_updates.items():
+            for word_id, (fwd, rev) in chunk_updates.items():
+                fwd_p0, fwd_s, fwd_d = fwd if fwd is not None else (None, None, None)
+                rev_p0, rev_s, rev_d = rev if rev is not None else (None, None, None)
                 session.execute(
                     sa_update(Word)
                     .where(Word.id == word_id)
-                    .values(next_rep_fwd_at=fwd_ts, next_rep_rev_at=rev_ts)
+                    .values(
+                        fwd_p0=fwd_p0, fwd_s=fwd_s, fwd_d=fwd_d,
+                        rev_p0=rev_p0, rev_s=rev_s, rev_d=rev_d,
+                    )
                 )
 
 
-def compute_all_schedules(
+def compute_all_params(
     model_path: str | Path,
     on_progress: ProgressFn | None = None,
     stop_event: threading.Event | None = None,
-    cfg: PredictConfig | None = None,
     schedule_cfg: ScheduleConfig | None = None,
 ) -> None:
-    """Load the checkpoint and update every word's ``next_repetition_at``.
+    """Load the checkpoint and recompute every word's forgetting-curve params.
+
+    The recall threshold / max interval are *not* applied here — they are honoured
+    live when recall and due times are derived from the stored params.
 
     Args:
         model_path: Path to the saved ``.pt`` checkpoint.
@@ -181,13 +184,10 @@ def compute_all_schedules(
             total_words)`` after each chunk completes.
         stop_event: Optional :class:`threading.Event` for cancellation.
             Checked between chunks; already-committed chunks are preserved.
-        cfg: Override the default :class:`PredictConfig` (e.g. with the
-            user-configured recall threshold).
         schedule_cfg: Override the default :class:`ScheduleConfig`.
     """
     model = load_model(str(model_path))
-    BatchScheduler(
+    ParamScheduler(
         model=model,
-        predict_cfg=cfg or PredictConfig(),
         schedule_cfg=schedule_cfg or ScheduleConfig(),
     ).run(on_progress=on_progress, stop_event=stop_event)

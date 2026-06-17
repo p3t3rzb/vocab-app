@@ -1,5 +1,5 @@
-"""Inference: per-word predictions and batched scheduling."""
+"""Inference: per-word predictions and batched param computation."""
 from src.model.inference.predictor import Predictor
-from src.model.inference.scheduler import BatchScheduler, compute_all_schedules
+from src.model.inference.scheduler import ParamScheduler, compute_all_params
 
-__all__ = ["Predictor", "BatchScheduler", "compute_all_schedules"]
+__all__ = ["Predictor", "ParamScheduler", "compute_all_params"]

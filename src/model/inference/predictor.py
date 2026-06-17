@@ -14,7 +14,7 @@ import torch
 from src.database import Direction
 from src.database.models import Repetition
 from src.model.config import PredictConfig
-from src.model.curve import curve_recall, next_delta
+from src.model.curve import curve_recall, next_delta, split_params
 from src.model.lstm import RecallLSTM
 
 
@@ -61,6 +61,25 @@ class Predictor:
         with torch.no_grad():
             raw = self._model(x)  # (1, L, 3)
         return raw[0, -1]  # (3,)
+
+    def curve_params(
+        self, reps: list[Repetition], direction: Direction
+    ) -> tuple[float, float, float]:
+        """Return the activated ``(p0, S, d)`` curve params for the next test.
+
+        These are the values persisted per (word, direction) so recall and
+        next-review time can be derived live without another model forward.
+
+        Args:
+            reps: Repetition history, oldest first. Must be non-empty.
+            direction: Practice direction the history belongs to.
+
+        Raises:
+            ValueError: if ``reps`` is empty.
+        """
+        raw_last = self._curve_params(reps, direction)
+        p0, s, d = split_params(raw_last)
+        return float(p0), float(s), float(d)
 
     def recall_probability(
         self, reps: list[Repetition], delta_seconds: float, direction: Direction

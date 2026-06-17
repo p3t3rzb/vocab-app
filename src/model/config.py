@@ -76,7 +76,7 @@ class PredictConfig:
 
 @dataclass
 class ScheduleConfig:
-    """Batched-scheduling knobs for :class:`BatchScheduler`.
+    """Batched param-computation knobs for :class:`ParamScheduler`.
 
     Attributes:
         chunk_size: Number of words processed per batched LSTM forward.

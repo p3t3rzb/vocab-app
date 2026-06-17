@@ -2,7 +2,7 @@
 
 ``training_worker`` runs :func:`src.model.train`, pushing per-epoch
 events and a final ``"done"`` (or ``"cancelled"`` / ``"error"``).
-``schedule_worker`` runs :func:`src.model.compute_all_schedules`
+``schedule_worker`` runs :func:`src.model.compute_all_params`
 on a single database, pushing chunk-progress events.
 """
 from __future__ import annotations
@@ -12,10 +12,9 @@ import threading
 from pathlib import Path
 
 from src.database import init_db
-from src.model import compute_all_schedules
+from src.model import compute_all_params
 from src.model import train as run_training
 from src.model.config import TrainConfig
-from src.settings import load_settings
 
 
 def training_worker(
@@ -47,15 +46,14 @@ def schedule_worker(
     out_queue: queue_module.Queue,
     stop_event: threading.Event,
 ) -> None:
-    """Run :func:`compute_all_schedules`, pushing progress and outcome events."""
+    """Run :func:`compute_all_params`, pushing progress and outcome events."""
     try:
-        compute_all_schedules(
+        compute_all_params(
             model_path=model_path,
             on_progress=lambda done, total: out_queue.put(
                 ("schedule_progress", done, total)
             ),
             stop_event=stop_event,
-            cfg=load_settings().to_predict_config(),
         )
         if stop_event.is_set():
             out_queue.put(("schedules_cancelled",))

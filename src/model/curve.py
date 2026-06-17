@@ -63,29 +63,43 @@ def curve_recall(
     return recall.clamp(eps, 1.0 - eps)
 
 
-def next_delta(
-    raw_params_last: torch.Tensor,
+def recall_at(p0: float, s: float, d: float, delta_seconds: float) -> float:
+    """Evaluate the recall curve ``R(Δt) = p0·(1 + Δt/S)**(−d)`` on Python floats.
+
+    The pure-``math`` counterpart of :func:`curve_recall`, for live recall scoring
+    from stored params (no tensor / no model forward). ``Δt`` is clamped to ``≥ 0``
+    and the result to ``(0, 1)``.
+    """
+    delta = max(0.0, delta_seconds)
+    try:
+        recall = p0 * math.pow(1.0 + delta / s, -d)
+    except (OverflowError, ValueError):
+        return PARAM_EPS
+    return min(max(recall, PARAM_EPS), 1.0 - PARAM_EPS)
+
+
+def invert_curve(
+    p0: float,
+    s: float,
+    d: float,
     threshold: float,
     max_delta_seconds: float = 63_072_000.0,
 ) -> float:
-    """Analytically invert the curve: seconds until ``R(Δt)`` hits ``threshold``.
+    """Seconds until ``R(Δt)`` falls to ``threshold``, from stored Python floats.
 
     Solving ``threshold = p0·(1 + Δt/S)**(−d)`` for ``Δt`` gives
     ``Δt = S·((p0 / threshold)**(1/d) − 1)``. If ``p0 ≤ threshold`` the word is
     already below the threshold the instant after review, so it is due now.
 
     Args:
-        raw_params_last: Raw head output for a single timestep, shape ``(3,)``.
+        p0, s, d: Forgetting-curve params (already activated, ``s``/``d`` > 0).
         threshold: Recall level below which the word is considered due.
-        max_delta_seconds: Hard cap on the returned interval (default 2 years),
-            mirroring :class:`~src.model.config.PredictConfig`. A small decay
-            ``d`` makes the closed form explode, so the result is clamped.
+        max_delta_seconds: Hard cap on the returned interval (default 2 years).
+            A small decay ``d`` makes the closed form explode, so it is clamped.
 
     Returns:
         Seconds until the next review, in ``[0, max_delta_seconds]``.
     """
-    p0_t, s_t, d_t = split_params(raw_params_last)
-    p0, s, d = float(p0_t), float(s_t), float(d_t)
     if p0 <= threshold:
         return 0.0
     try:
@@ -93,3 +107,27 @@ def next_delta(
     except OverflowError:
         return max_delta_seconds
     return min(delta, max_delta_seconds)
+
+
+def next_delta(
+    raw_params_last: torch.Tensor,
+    threshold: float,
+    max_delta_seconds: float = 63_072_000.0,
+) -> float:
+    """Analytically invert the curve from a raw ``(3,)`` head output.
+
+    Thin wrapper over :func:`invert_curve` that first activates the raw params
+    via :func:`split_params`.
+
+    Args:
+        raw_params_last: Raw head output for a single timestep, shape ``(3,)``.
+        threshold: Recall level below which the word is considered due.
+        max_delta_seconds: Hard cap on the returned interval (default 2 years).
+
+    Returns:
+        Seconds until the next review, in ``[0, max_delta_seconds]``.
+    """
+    p0_t, s_t, d_t = split_params(raw_params_last)
+    return invert_curve(
+        float(p0_t), float(s_t), float(d_t), threshold, max_delta_seconds
+    )

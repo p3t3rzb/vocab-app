@@ -41,9 +41,11 @@ class Database:
         Calling it again with a different URL replaces the active engine; the
         previous engine is disposed.
 
-        Also performs an idempotent migration: if an older database is missing
-        the per-direction ``next_rep_fwd_at`` / ``next_rep_rev_at`` columns,
-        they are added via ``ALTER TABLE``.
+        Also performs an idempotent migration: the six per-direction
+        forgetting-curve columns (``fwd_p0``/``fwd_s``/``fwd_d`` and their
+        ``rev_*`` counterparts) are added via ``ALTER TABLE`` on databases that
+        pre-date them, and the obsolete ``next_rep_fwd_at`` / ``next_rep_rev_at``
+        timestamp columns are dropped.
 
         Args:
             database_url: SQLAlchemy URL such as
@@ -96,15 +98,25 @@ class Database:
 
     @staticmethod
     def _run_migrations(engine: Engine) -> None:
-        """Add per-direction next-rep columns to pre-existing databases."""
+        """Migrate pre-existing databases to the per-direction curve-param columns.
+
+        Adds the six ``fwd_*`` / ``rev_*`` REAL columns if missing and drops the
+        obsolete due-timestamp columns (``next_repetition_at`` and the
+        per-direction ``next_rep_fwd_at`` / ``next_rep_rev_at``). ``DROP COLUMN``
+        requires SQLite ≥ 3.35, bundled with Python 3.13.
+        """
         with engine.connect() as conn:
             cols = [row[1] for row in conn.execute(text("PRAGMA table_info(words)"))]
-            added = False
-            for col_name in ("next_rep_fwd_at", "next_rep_rev_at"):
+            changed = False
+            for col_name in ("fwd_p0", "fwd_s", "fwd_d", "rev_p0", "rev_s", "rev_d"):
                 if col_name not in cols:
-                    conn.execute(text(f"ALTER TABLE words ADD COLUMN {col_name} INTEGER"))
-                    added = True
-            if added:
+                    conn.execute(text(f"ALTER TABLE words ADD COLUMN {col_name} REAL"))
+                    changed = True
+            for col_name in ("next_repetition_at", "next_rep_fwd_at", "next_rep_rev_at"):
+                if col_name in cols:
+                    conn.execute(text(f"ALTER TABLE words DROP COLUMN {col_name}"))
+                    changed = True
+            if changed:
                 conn.commit()
 
     @staticmethod

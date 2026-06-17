@@ -196,7 +196,10 @@ class TrainScreen(BaseScreen):
         self._status_var.set(f"Computing schedules… {done}/{total}")
 
     def _on_schedules_done(self) -> None:
-        self._reset_controls("Done — model trained and schedules updated.", success=True)
+        # Every word's curve params were just recomputed — drop the cached due
+        # times so the word list rebuilds them.
+        self._app.invalidate_due_cache()
+        self._reset_controls("Done — model trained and params updated.", success=True)
 
     def _on_schedules_cancelled(self) -> None:
         self._reset_controls("Schedule computation cancelled.")

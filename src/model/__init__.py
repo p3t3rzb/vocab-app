@@ -8,12 +8,12 @@ Public surface:
 * :func:`load_model` — load a saved checkpoint.
 * :class:`Predictor` — per-word recall probability and next-review estimates.
 * :class:`Trainer`, :func:`train` — training entry points.
-* :func:`compute_all_schedules` — batched re-scheduling of every word.
+* :func:`compute_all_params` — batched recomputation of every word's curve params.
 """
 from src.model.checkpoint import load_model
 from src.model.config import PredictConfig, ScheduleConfig, TrainConfig
-from src.model.curve import curve_recall, next_delta
-from src.model.inference import Predictor, compute_all_schedules
+from src.model.curve import curve_recall, invert_curve, next_delta, recall_at
+from src.model.inference import Predictor, compute_all_params
 from src.model.lstm import RecallLSTM
 from src.model.training import Trainer, train
 
@@ -23,10 +23,12 @@ __all__ = [
     "TrainConfig",
     "RecallLSTM",
     "curve_recall",
+    "recall_at",
+    "invert_curve",
     "next_delta",
     "load_model",
     "Predictor",
     "Trainer",
     "train",
-    "compute_all_schedules",
+    "compute_all_params",
 ]
