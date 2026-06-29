@@ -19,7 +19,7 @@ from src.database import (
     get_session,
 )
 from src.model.config import PredictConfig
-from src.model.curve import recall_at
+from src.model.curve import invert_curve, recall_at
 
 # Priority floor for never-practiced ("new") cards: always after any due card,
 # whose recall score lives in (0, 1). The random offset shuffles new cards.
@@ -74,6 +74,12 @@ class PracticeQueue:
             return None
         return heapq.heappop(self._heap)[2]
 
+    def peek_priority(self) -> float | None:
+        """Return the smallest priority without popping, or ``None`` if empty."""
+        if not self._heap:
+            return None
+        return self._heap[0][0]
+
     def __len__(self) -> int:
         return len(self._heap)
 
@@ -89,20 +95,25 @@ def _direction_params(word, direction: Direction) -> tuple[float, float, float] 
     return trio  # type: ignore[return-value]
 
 
-def build_queue(now: int, cfg: PredictConfig) -> PracticeQueue:
-    """Build the practice queue, ordered by live recall score.
+def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQueue]:
+    """Build the (main, waiting) practice queues.
 
-    For each (word, direction):
+    The main queue is ordered by live recall score (lower = more likely
+    forgotten = shown first); the waiting queue holds not-due cards keyed by
+    their due timestamp (soonest first) so the session can promote them as they
+    come due. For each (word, direction):
 
-    * **New** (never practiced in that direction) → enqueued after every due
+    * **New** (never practiced in that direction) → main queue, after every due
       card, in random order.
     * **Due, scored** (has history + stored params, ``recall ≤ threshold``) →
-      enqueued with ``priority = recall`` so the worst-recalled comes first.
+      main queue with ``priority = recall`` so the worst-recalled comes first.
     * **Due, unscored** (history but no params, i.e. no trained model) →
-      enqueued with a random priority in ``[0, 1)`` (can't score it).
-    * **Not due** (scored, ``recall > threshold``) → skipped this session.
+      main queue with a random priority in ``[0, 1)`` (can't score it).
+    * **Not due** (scored, ``recall > threshold``) → waiting queue keyed by its
+      due timestamp ``last + invert_curve(...)`` (always ``> now``).
     """
     queue = PracticeQueue()
+    waiting = PracticeQueue()
     with get_session() as session:
         words = WordRepository(session).get_all()
         last_by_dir = RepetitionRepository(session).latest_practiced_at_by_word_direction()
@@ -132,5 +143,11 @@ def build_queue(now: int, cfg: PredictConfig) -> PracticeQueue:
             recall = recall_at(p0, s, d, now - last)
             if recall <= cfg.recall_threshold:
                 queue.push(card, recall)
+            else:
+                # Not due yet — park it in the waiting heap keyed by due time.
+                due_ts = last + int(
+                    invert_curve(p0, s, d, cfg.recall_threshold, cfg.max_delta_seconds)
+                )
+                waiting.push(card, due_ts)
 
-    return queue
+    return queue, waiting

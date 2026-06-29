@@ -35,6 +35,7 @@ class PracticeScreen(BaseScreen):
     def __init__(self, master: App) -> None:
         self._predictor: Predictor | None = None
         self._queue: PracticeQueue = PracticeQueue()
+        self._waiting: PracticeQueue = PracticeQueue()
         self._answered_count = 0
         self._state: PracticeState = PracticeState.LOADING
         self._current: Card | None = None
@@ -268,8 +269,26 @@ class PracticeScreen(BaseScreen):
     # Card flow
     # ------------------------------------------------------------------
 
+    def _promote_due(self) -> None:
+        """Move every waiting card whose due time has passed into the main heap.
+
+        A just-due card has ``recall ≈ threshold`` by construction, so the
+        recall threshold is the right main-heap priority — it slots in at the
+        least-urgent end of the due cards.
+        """
+        now = int(time.time())
+        threshold = self._predictor.config.recall_threshold if self._predictor else 1.0
+        while True:
+            due_ts = self._waiting.peek_priority()
+            if due_ts is None or due_ts > now:
+                break
+            card = self._waiting.pop()
+            if card is not None:
+                self._queue.push(card, threshold)
+
     def _show_current(self) -> None:
         """Pop and render the next-most-urgent card, or transition to DONE when empty."""
+        self._promote_due()
         card = self._queue.pop()
         if card is None:
             self._current = None
@@ -313,10 +332,16 @@ class PracticeScreen(BaseScreen):
     # BackgroundJob handlers
     # ------------------------------------------------------------------
 
-    def _on_ready(self, predictor: Predictor | None, queue: PracticeQueue) -> None:
-        """Init worker finished — install the queue and show the first card."""
+    def _on_ready(
+        self,
+        predictor: Predictor | None,
+        queue: PracticeQueue,
+        waiting: PracticeQueue,
+    ) -> None:
+        """Init worker finished — install both queues and show the first card."""
         self._predictor = predictor
         self._queue = queue
+        self._waiting = waiting
         self._show_current()
 
     def _on_init_error(self, msg: str) -> None:
@@ -341,9 +366,7 @@ class PracticeScreen(BaseScreen):
             delta = next_ts - int(time.time())
             self._next_var.set(f"next repetition {format_future(delta)}")
 
-        if next_ts is not None and next_ts <= int(time.time()):
-            # Still due right after this attempt — re-queue at its recall-sorted
-            # position so it returns later in the session.
+        if next_ts is not None:
             refreshed = Card(
                 word_id=card.word_id,
                 direction=card.direction,
@@ -351,7 +374,14 @@ class PracticeScreen(BaseScreen):
                 target_text=card.target_text,
                 last_practiced=practiced_at,
             )
-            self._queue.push(refreshed, recall_now if recall_now is not None else 0.0)
+            if next_ts <= int(time.time()):
+                # Still due right after this attempt — re-queue at its
+                # recall-sorted position so it returns later in the session.
+                self._queue.push(refreshed, recall_now if recall_now is not None else 0.0)
+            else:
+                # Due in the future — park it in the waiting heap so it can be
+                # promoted back if it comes due before the session ends.
+                self._waiting.push(refreshed, next_ts)
 
         self._set_state(PracticeState.RESULT)
 

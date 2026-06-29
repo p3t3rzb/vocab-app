@@ -33,8 +33,8 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
             model = load_model(str(ctx.model_path))
             predictor = Predictor(model, cfg)
 
-        queue = build_queue(now=int(time.time()), cfg=cfg)
-        out_queue.put(("ready", predictor, queue))
+        queue, waiting = build_queue(now=int(time.time()), cfg=cfg)
+        out_queue.put(("ready", predictor, queue, waiting))
     except Exception as exc:
         out_queue.put(("error", str(exc)))
 
