@@ -104,7 +104,10 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     come due. For each (word, direction):
 
     * **New** (never practiced in that direction) → main queue, after every due
-      card, in random order.
+      card. New cards are grouped per word and the words are shuffled as pairs,
+      so both directions of a freshly-seen word appear back to back (in random
+      order within the pair). A word with only one new direction takes its own
+      slot.
     * **Due, scored** (has history + stored params, ``recall ≤ threshold``) →
       main queue with ``priority = recall`` so the worst-recalled comes first.
     * **Due, unscored** (history but no params, i.e. no trained model) →
@@ -114,6 +117,7 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     """
     queue = PracticeQueue()
     waiting = PracticeQueue()
+    new_by_word: dict[int, list[Card]] = {}
     with get_session() as session:
         words = WordRepository(session).get_all()
         last_by_dir = RepetitionRepository(session).latest_practiced_at_by_word_direction()
@@ -130,7 +134,8 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
             )
             if last is None:
                 # Never practiced in this direction — trails all due cards.
-                queue.push(card, _NEW_PRIORITY_BASE + random.random())
+                # Collect per word so both directions can be kept together.
+                new_by_word.setdefault(word.id, []).append(card)
                 continue
 
             params = _direction_params(word, direction)
@@ -149,5 +154,15 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
                     invert_curve(p0, s, d, cfg.recall_threshold, cfg.max_delta_seconds)
                 )
                 waiting.push(card, due_ts)
+
+    # Emit new cards last: shuffle the per-word buckets (randomizes pair order),
+    # then push each bucket's cards contiguously with an increasing base so both
+    # directions of a word land back to back, after every due card.
+    buckets = list(new_by_word.values())
+    random.shuffle(buckets)
+    for i, cards in enumerate(buckets):
+        random.shuffle(cards)  # random direction order within the pair
+        for j, card in enumerate(cards):
+            queue.push(card, _NEW_PRIORITY_BASE + i + j * 0.5)
 
     return queue, waiting
