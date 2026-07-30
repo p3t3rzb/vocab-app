@@ -1,9 +1,9 @@
 """Training screen view — UI, controls, and worker coordination.
 
 Holds two sequential :class:`BackgroundJob`s (training, then schedule
-recalc) plus a :class:`LossPlot`. The view decides which controls are
-enabled in each phase; the plot owns its own matplotlib figure; the
-workers contain no Tk imports.
+recalc), a third for deleting the checkpoint, plus a :class:`LossPlot`.
+The view decides which controls are enabled in each phase; the plot owns
+its own matplotlib figure; the workers contain no Tk imports.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from ..base_screen import BaseScreen
 from ..theme import Colors, Defaults, Fonts, Limits, PollIntervals, Spacing
 from ..widgets import build_header
 from .plot import LossPlot
-from .workers import schedule_worker, training_worker
+from .workers import delete_model_worker, schedule_worker, training_worker
 
 if TYPE_CHECKING:
     from ..app import App
@@ -52,6 +52,14 @@ class TrainScreen(BaseScreen):
                 "schedules_done": self._on_schedules_done,
                 "schedules_cancelled": self._on_schedules_cancelled,
                 "schedules_error": self._on_schedules_error,
+            },
+            poll_ms=PollIntervals.MS,
+        )
+        self._delete_job = BackgroundJob(
+            self,
+            handlers={
+                "delete_done": self._on_delete_done,
+                "delete_error": self._on_delete_error,
             },
             poll_ms=PollIntervals.MS,
         )
@@ -119,6 +127,25 @@ class TrainScreen(BaseScreen):
         )
         self._btn_cancel.pack(side="left", padx=6)
 
+        self._btn_delete = ctk.CTkButton(
+            ctrl,
+            text="Delete Model",
+            width=120,
+            fg_color=Colors.DANGER,
+            hover_color=Colors.DANGER_HOVER,
+            command=self._delete_model,
+        )
+        self._btn_delete.pack(side="left", padx=(20, 6))
+
+    def on_show(self) -> None:
+        """Reflect whether a checkpoint currently exists on disk."""
+        self._refresh_delete_button()
+
+    def _refresh_delete_button(self) -> None:
+        """Enable Delete Model only when a checkpoint exists on disk."""
+        exists = self._ctx.model_path.exists()
+        self._btn_delete.configure(state="normal" if exists else "disabled")
+
     # ------------------------------------------------------------------
     # Training control
     # ------------------------------------------------------------------
@@ -141,6 +168,7 @@ class TrainScreen(BaseScreen):
 
         self._btn_train.configure(state="disabled")
         self._epochs_entry.configure(state="disabled")
+        self._btn_delete.configure(state="disabled")
         self._btn_cancel.configure(state="normal")
         self._status_var.set("Starting training…")
         self._progress.start()
@@ -208,6 +236,56 @@ class TrainScreen(BaseScreen):
         self._reset_controls(f"Schedule error: {msg}", error_title="Schedule error")
 
     # ------------------------------------------------------------------
+    # Model deletion
+    # ------------------------------------------------------------------
+
+    def _delete_model(self) -> None:
+        """Confirm, then delete the checkpoint and fall back to the heuristic."""
+        if (
+            self._train_job.is_running
+            or self._schedule_job.is_running
+            or self._delete_job.is_running
+        ):
+            return
+        if not self._ctx.model_path.exists():
+            self._refresh_delete_button()
+            return
+
+        confirmed = messagebox.askyesno(
+            "Delete trained model",
+            f"Delete the trained model for {self._ctx.src_lang} ↔ {self._ctx.tgt_lang}?\n\n"
+            "Repetition times will be recomputed with the built-in heuristic "
+            "until you train again. Your words and practice history are not touched.",
+            parent=self,
+        )
+        if not confirmed:
+            return
+
+        self._btn_train.configure(state="disabled")
+        self._epochs_entry.configure(state="disabled")
+        self._btn_delete.configure(state="disabled")
+        self._status_var.set("Deleting model and recomputing with the heuristic…")
+        self._progress.configure(mode="indeterminate")
+        self._progress.start()
+
+        self._delete_job.start(
+            delete_model_worker, self._ctx.model_path, self._delete_job.queue,
+        )
+
+    def _on_delete_done(self, count: int) -> None:
+        # Every word's params were just rewritten by the heuristic — drop the
+        # cached due times so the word list rebuilds them.
+        self._app.invalidate_due_cache()
+        self._plot.reset()
+        self._reset_controls(
+            f"Model deleted — {count} words rescheduled with the heuristic.",
+            success=True,
+        )
+
+    def _on_delete_error(self, msg: str) -> None:
+        self._reset_controls(f"Delete error: {msg}", error_title="Delete error")
+
+    # ------------------------------------------------------------------
     # Shared UI reset / cancel
     # ------------------------------------------------------------------
 
@@ -225,6 +303,7 @@ class TrainScreen(BaseScreen):
         self._btn_train.configure(state="normal")
         self._epochs_entry.configure(state="normal")
         self._btn_cancel.configure(state="disabled")
+        self._refresh_delete_button()
         self._status_var.set(message)
         if error_title is not None:
             messagebox.showerror(error_title, message, parent=self)
