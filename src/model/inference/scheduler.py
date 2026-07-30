@@ -21,8 +21,9 @@ from sqlalchemy import select, update as sa_update
 from src.database import Direction, get_session
 from src.database.models import Repetition, Word
 from src.model.checkpoint import load_model
-from src.model.config import ScheduleConfig
+from src.model.config import HeuristicConfig, ScheduleConfig
 from src.model.curve import split_params
+from src.model.inference.heuristic import HeuristicPredictor
 from src.model.lstm import RecallLSTM
 
 ProgressFn = Callable[[int, int], None]
@@ -75,7 +76,7 @@ class ParamScheduler:
             chunk_updates = self._process_chunk(chunk, reps_map)
 
             if chunk_updates:
-                self._persist(chunk_updates)
+                _persist_params(chunk_updates)
 
             if on_progress is not None:
                 on_progress(min(chunk_start + chunk_size, total), total)
@@ -146,25 +147,76 @@ class ParamScheduler:
         p0, s, d = split_params(raw_last)  # each (B,)
         return list(zip(p0.tolist(), s.tolist(), d.tolist()))
 
-    @staticmethod
-    def _persist(chunk_updates: dict[int, tuple[Params | None, Params | None]]) -> None:
-        """Write per-direction curve params for a chunk of words in one short session.
+def _persist_params(
+    chunk_updates: dict[int, tuple[Params | None, Params | None]],
+) -> None:
+    """Write per-direction curve params for a chunk of words in one short session.
 
-        A ``None`` direction clears its three columns to SQL ``NULL`` (no history
-        yet), so the word list renders "–" until that direction is practiced.
-        """
-        with get_session() as session:
-            for word_id, (fwd, rev) in chunk_updates.items():
-                fwd_p0, fwd_s, fwd_d = fwd if fwd is not None else (None, None, None)
-                rev_p0, rev_s, rev_d = rev if rev is not None else (None, None, None)
-                session.execute(
-                    sa_update(Word)
-                    .where(Word.id == word_id)
-                    .values(
-                        fwd_p0=fwd_p0, fwd_s=fwd_s, fwd_d=fwd_d,
-                        rev_p0=rev_p0, rev_s=rev_s, rev_d=rev_d,
-                    )
+    A ``None`` direction clears its three columns to SQL ``NULL`` (no history
+    yet), so the word list renders "–" until that direction is practiced.
+    """
+    with get_session() as session:
+        for word_id, (fwd, rev) in chunk_updates.items():
+            fwd_p0, fwd_s, fwd_d = fwd if fwd is not None else (None, None, None)
+            rev_p0, rev_s, rev_d = rev if rev is not None else (None, None, None)
+            session.execute(
+                sa_update(Word)
+                .where(Word.id == word_id)
+                .values(
+                    fwd_p0=fwd_p0, fwd_s=fwd_s, fwd_d=fwd_d,
+                    rev_p0=rev_p0, rev_s=rev_s, rev_d=rev_d,
                 )
+            )
+
+
+def backfill_heuristic_params(
+    heuristic_cfg: HeuristicConfig | None = None,
+) -> int:
+    """Fill in curve params from repetition history *without* a trained model.
+
+    The model-free counterpart of :func:`compute_all_params`, for a language pair
+    that has no checkpoint yet: it runs :class:`HeuristicPredictor` over every
+    (word, direction) that has history and persists the resulting ``(p0, S, d)``.
+    Without it, repetitions recorded before a pair had any estimator would sit at
+    ``NULL`` — practised, but unscheduled and rendered "–" in the word list —
+    until each was answered once more.
+
+    Only words that actually have history are touched, so untouched words keep
+    their ``NULL`` params and stay in the practice queue's "new" bucket.
+
+    Args:
+        heuristic_cfg: Override the default :class:`HeuristicConfig`.
+
+    Returns:
+        The number of words whose params were written.
+    """
+    predictor = HeuristicPredictor(heuristic_config=heuristic_cfg)
+
+    with get_session() as session:
+        all_reps = list(
+            session.scalars(
+                select(Repetition).order_by(
+                    Repetition.word_id, Repetition.direction, Repetition.practiced_at
+                )
+            )
+        )
+
+    reps_map: dict[tuple[int, int], list[Repetition]] = defaultdict(list)
+    for rep in all_reps:
+        reps_map[(rep.word_id, rep.direction)].append(rep)
+
+    updates: dict[int, tuple[Params | None, Params | None]] = {}
+    for word_id in {word_id for word_id, _ in reps_map}:
+        updates[word_id] = tuple(  # type: ignore[assignment]
+            predictor.curve_params(reps, direction)
+            if (reps := reps_map.get((word_id, int(direction))))
+            else None
+            for direction in Direction
+        )
+
+    if updates:
+        _persist_params(updates)
+    return len(updates)
 
 
 def compute_all_params(

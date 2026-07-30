@@ -22,7 +22,7 @@ from src.database import (
     get_session,
     init_db,
 )
-from src.model import Predictor, load_model
+from src.model import HeuristicPredictor, Predictor, RecallEstimator, load_model
 from src.model.config import PredictConfig
 
 
@@ -42,7 +42,7 @@ def _fmt_duration(seconds: float) -> str:
 
 
 def _predict_for_direction(
-    predictor: Predictor,
+    predictor: RecallEstimator,
     word_id: int,
     source_text: str,
     target_text: str,
@@ -129,10 +129,6 @@ def main() -> None:
         target_lang = lp.target_language
 
         ckpt_path = Path("storage") / "models" / f"{source_lang.lower()}_{target_lang.lower()}.pt"
-        if not ckpt_path.exists():
-            print(f"Error: no model checkpoint found at {ckpt_path}")
-            print("Train a model first via the GUI (Word list → Train Model).")
-            return
 
         words_repo = WordRepository(session)
 
@@ -156,8 +152,15 @@ def main() -> None:
                 print(f"Found {len(matches)} matches — showing first 5. Use --word-id for a specific word.")
                 matches = matches[:5]
 
-    model = load_model(ckpt_path)
-    predictor = Predictor(model, PredictConfig())
+    predictor: RecallEstimator
+    if ckpt_path.exists():
+        predictor = Predictor(load_model(ckpt_path), PredictConfig())
+    else:
+        # No checkpoint for this pair yet — fall back to the model-free schedule
+        # the practice screen uses, rather than refusing to predict at all.
+        print(f"No model checkpoint at {ckpt_path} — using the heuristic schedule.")
+        print("Train a model via the GUI (Word list → Train Model) for real predictions.\n")
+        predictor = HeuristicPredictor(PredictConfig())
 
     directions: list[Direction] = []
     if args.direction in ("forward", "both"):

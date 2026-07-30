@@ -75,6 +75,59 @@ class PredictConfig:
 
 
 @dataclass
+class HeuristicConfig:
+    """Calibration constants for the model-free :class:`HeuristicPredictor`.
+
+    These describe an SM-2-style schedule expressed in the same forgetting-curve
+    parameterisation the LSTM emits, so the heuristic's output is stored and
+    consumed exactly like a trained model's.
+
+    ``reference_threshold`` is deliberately a constant here rather than the
+    user's :class:`PredictConfig` setting: the stored ``(p0, S, d)`` must stay
+    threshold-independent (the user's threshold is applied live, downstream).
+    It is the recall level at which the intervals below are the ones actually
+    produced; raising the user's threshold shortens them from there.
+
+    Attributes:
+        reference_threshold: Recall level the intervals below are calibrated at.
+        decay: The curve's decay exponent ``d``, held fixed — with ``S`` solved
+            per word, ``d`` only sets the curve's shape, not its due time.
+        first_interval: Interval after the first successful rep, and after the
+            first success following a lapse (SM-2 restarts the ladder rather
+            than resuming it). Doubles as the floor under every success, so a
+            card relearned mid-session graduates out of the session instead of
+            ramping up from the seconds-scale gap a re-queue leaves behind.
+        relearn_interval: Time-scale used right after a failed rep.
+        max_interval: Hard cap on the derived interval.
+        ease_start: Ease factor for a word with no history yet.
+        ease_bonus: Ease gained per successful rep.
+        ease_penalty: Ease lost per failed rep.
+        ease_min / ease_max: Bounds on the ease factor.
+        lapse_p0: Recall ceiling assigned right after a failure. Below
+            ``reference_threshold`` on purpose, so a just-failed card inverts to
+            "due now" and the practice loop re-queues it in the same session.
+        p0_base: Recall ceiling after one successful rep.
+        p0_streak_bonus: Ceiling gained per additional consecutive success.
+        p0_max: Upper bound on the recall ceiling.
+    """
+
+    reference_threshold: float = 0.8
+    decay: float = 0.5
+    first_interval: float = 86_400.0     # 1 day
+    relearn_interval: float = 600.0      # 10 minutes
+    max_interval: float = 63_072_000.0   # 2 years
+    ease_start: float = 2.5
+    ease_bonus: float = 0.1
+    ease_penalty: float = 0.2
+    ease_min: float = 1.3
+    ease_max: float = 3.0
+    lapse_p0: float = 0.7
+    p0_base: float = 0.9
+    p0_streak_bonus: float = 0.01
+    p0_max: float = 0.98
+
+
+@dataclass
 class ScheduleConfig:
     """Batched param-computation knobs for :class:`ParamScheduler`.
 

@@ -23,17 +23,22 @@ from .queue_model import Card, PracticeQueue
 from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
 
+from src.model import HeuristicPredictor
+
 if TYPE_CHECKING:
-    from src.model import Predictor
+    from src.model import RecallEstimator
 
     from ..app import App
+
+#: Appended to the result line while the untrained-pair fallback is scheduling.
+HEURISTIC_NOTE = "  (heuristic — no trained model yet)"
 
 
 class PracticeScreen(BaseScreen):
     """Arrow-key driven spaced-repetition session."""
 
     def __init__(self, master: App) -> None:
-        self._predictor: Predictor | None = None
+        self._predictor: RecallEstimator | None = None
         self._queue: PracticeQueue = PracticeQueue()
         self._waiting: PracticeQueue = PracticeQueue()
         self._answered_count = 0
@@ -334,7 +339,7 @@ class PracticeScreen(BaseScreen):
 
     def _on_ready(
         self,
-        predictor: Predictor | None,
+        predictor: RecallEstimator | None,
         queue: PracticeQueue,
         waiting: PracticeQueue,
     ) -> None:
@@ -361,10 +366,11 @@ class PracticeScreen(BaseScreen):
         self._app.invalidate_due_cache()
 
         if next_ts is None:
-            self._next_var.set("next repetition: —  (no trained model)")
+            self._next_var.set("next repetition: —  (no estimator)")
         else:
             delta = next_ts - int(time.time())
-            self._next_var.set(f"next repetition {format_future(delta)}")
+            note = HEURISTIC_NOTE if isinstance(self._predictor, HeuristicPredictor) else ""
+            self._next_var.set(f"next repetition {format_future(delta)}{note}")
 
         if next_ts is not None:
             refreshed = Card(
