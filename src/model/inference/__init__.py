@@ -1,7 +1,7 @@
 """Inference: per-word predictions and batched param computation."""
-from src.model.inference.heuristic import HeuristicPredictor
-from src.model.inference.predictor import Predictor
-from src.model.inference.scheduler import (
+from .heuristic import HeuristicPredictor
+from .predictor import Predictor
+from .scheduler import (
     ParamScheduler,
     backfill_heuristic_params,
     compute_all_params,

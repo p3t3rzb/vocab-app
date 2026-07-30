@@ -39,8 +39,9 @@ from __future__ import annotations
 
 from src.database import Direction
 from src.database.models import Repetition
-from src.model.config import HeuristicConfig, PredictConfig
-from src.model.curve import invert_curve, recall_at
+
+from ..config import HeuristicConfig, PredictConfig
+from ..curve import invert_curve, recall_at
 
 
 class HeuristicPredictor:

@@ -13,9 +13,10 @@ import torch
 
 from src.database import Direction
 from src.database.models import Repetition
-from src.model.config import PredictConfig
-from src.model.curve import curve_recall, next_delta, split_params
-from src.model.lstm import RecallLSTM
+
+from ..config import PredictConfig
+from ..curve import curve_recall, next_delta, split_params
+from ..lstm import RecallLSTM
 
 
 class Predictor:

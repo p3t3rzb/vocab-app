@@ -12,8 +12,8 @@ from pathlib import Path
 
 import torch
 
-from src.model.device import get_device
-from src.model.lstm import RecallLSTM
+from .device import get_device
+from .lstm import RecallLSTM
 
 
 def save_checkpoint(model: RecallLSTM, path: Path, val_loss: float, epoch: int) -> None:

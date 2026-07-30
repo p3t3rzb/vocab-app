@@ -20,11 +20,12 @@ from sqlalchemy import select, update as sa_update
 
 from src.database import Direction, get_session
 from src.database.models import Repetition, Word
-from src.model.checkpoint import load_model
-from src.model.config import HeuristicConfig, ScheduleConfig
-from src.model.curve import split_params
-from src.model.inference.heuristic import HeuristicPredictor
-from src.model.lstm import RecallLSTM
+
+from ..checkpoint import load_model
+from ..config import HeuristicConfig, ScheduleConfig
+from ..curve import split_params
+from ..lstm import RecallLSTM
+from .heuristic import HeuristicPredictor
 
 ProgressFn = Callable[[int, int], None]
 

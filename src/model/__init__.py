@@ -13,23 +13,23 @@ Public surface:
 * :func:`compute_all_params` — batched recomputation of every word's curve params.
 * :func:`backfill_heuristic_params` — the same, model-free, for untrained pairs.
 """
-from src.model.checkpoint import load_model
-from src.model.config import (
+from .checkpoint import load_model
+from .config import (
     HeuristicConfig,
     PredictConfig,
     ScheduleConfig,
     TrainConfig,
 )
-from src.model.curve import curve_recall, invert_curve, next_delta, recall_at
-from src.model.inference import (
+from .curve import curve_recall, invert_curve, next_delta, recall_at
+from .inference import (
     HeuristicPredictor,
     Predictor,
     RecallEstimator,
     backfill_heuristic_params,
     compute_all_params,
 )
-from src.model.lstm import RecallLSTM
-from src.model.training import Trainer, train
+from .lstm import RecallLSTM
+from .training import Trainer, train
 
 __all__ = [
     "HeuristicConfig",

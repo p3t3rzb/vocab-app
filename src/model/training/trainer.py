@@ -11,14 +11,15 @@ import torch
 import torch.nn as nn
 
 from src.database import LanguagePairRepository, get_session
-from src.model.checkpoint import save_checkpoint
-from src.model.config import TrainConfig
-from src.model.curve import curve_recall
-from src.model.dataset import Sequence, build_sequences, split_sequences
-from src.model.device import get_device
-from src.model.lstm import RecallLSTM
-from src.model.training.batching import bucket_batches
-from src.model.training.loss import masked_bce
+
+from ..checkpoint import save_checkpoint
+from ..config import TrainConfig
+from ..curve import curve_recall
+from ..dataset import Sequence, build_sequences, split_sequences
+from ..device import get_device
+from ..lstm import RecallLSTM
+from .batching import bucket_batches
+from .loss import masked_bce
 
 EpochCallback = Callable[[int, float, float], None]
 
