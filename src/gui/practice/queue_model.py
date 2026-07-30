@@ -104,10 +104,11 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     come due. For each (word, direction):
 
     * **New** (never practiced in that direction) → main queue, after every due
-      card. New cards are grouped per word and the words are shuffled as pairs,
-      so both directions of a freshly-seen word appear back to back (in random
-      order within the pair). A word with only one new direction takes its own
-      slot.
+      card. New cards are grouped per word and shuffled as pairs, so both
+      directions of a freshly-seen word appear back to back (in random order
+      within the pair). Words whose *other* direction was already learned (only
+      one new direction left) come first, so a half-learned word is finished
+      before brand-new pairs are introduced.
     * **Due, scored** (has history + stored params, ``recall ≤ threshold``) →
       main queue with ``priority = recall`` so the worst-recalled comes first.
     * **Due, unscored** (history but no params, i.e. no trained model) →
@@ -155,12 +156,18 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
                 )
                 waiting.push(card, due_ts)
 
-    # Emit new cards last: shuffle the per-word buckets (randomizes pair order),
-    # then push each bucket's cards contiguously with an increasing base so both
-    # directions of a word land back to back, after every due card.
+    # Emit new cards last, after every due card. A single-card bucket means the
+    # word's other direction already has history (learned in an earlier session),
+    # so finish that half-learned word before meeting brand-new pairs: order the
+    # single-card buckets ahead of the two-card ones. Shuffle within each group
+    # (randomizes order) and push each bucket's cards contiguously with an
+    # increasing base so both directions of a word land back to back.
     buckets = list(new_by_word.values())
-    random.shuffle(buckets)
-    for i, cards in enumerate(buckets):
+    partial = [b for b in buckets if len(b) == 1]  # other direction already learned
+    pairs = [b for b in buckets if len(b) != 1]     # both directions still new
+    random.shuffle(partial)
+    random.shuffle(pairs)
+    for i, cards in enumerate(partial + pairs):
         random.shuffle(cards)  # random direction order within the pair
         for j, card in enumerate(cards):
             queue.push(card, _NEW_PRIORITY_BASE + i + j * 0.5)
