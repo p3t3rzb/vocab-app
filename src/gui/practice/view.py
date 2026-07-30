@@ -16,7 +16,7 @@ from src.database import init_db
 
 from ..background import BackgroundJob
 from ..base_screen import BaseScreen
-from ..formatting import format_future, format_past
+from ..formatting import day_start, format_future, format_past
 from ..theme import Fonts, Hints, PollIntervals, Spacing
 from ..widgets import build_header
 from .queue_model import Card, PracticeQueue
@@ -42,6 +42,8 @@ class PracticeScreen(BaseScreen):
         self._queue: PracticeQueue = PracticeQueue()
         self._waiting: PracticeQueue = PracticeQueue()
         self._answered_count = 0
+        self._today_count = 0
+        self._today_start = day_start()
         self._state: PracticeState = PracticeState.LOADING
         self._current: Card | None = None
         self._keys_bound = False
@@ -253,7 +255,11 @@ class PracticeScreen(BaseScreen):
         self._update_stats()
 
     def _update_stats(self) -> None:
-        """Refresh the "Answered N • Remaining M" counter in the header."""
+        """Refresh the "Answered N • Today K • Remaining M" counter in the header.
+
+        ``Answered`` counts this session only; ``Today`` counts every repetition
+        recorded in this database since local midnight, earlier sessions included.
+        """
         if self._state is PracticeState.LOADING:
             self._stats_var.set("")
             return
@@ -263,12 +269,10 @@ class PracticeScreen(BaseScreen):
             PracticeState.PROMPT, PracticeState.ANSWER, PracticeState.SAVING
         ) else 0
         remaining = len(self._queue) + pending
-        if self._state is PracticeState.DONE:
-            self._stats_var.set(f"Answered {self._answered_count}")
-        else:
-            self._stats_var.set(
-                f"Answered {self._answered_count}  •  Remaining {remaining}"
-            )
+        parts = [f"Answered {self._answered_count}", f"Today {self._today_count}"]
+        if self._state is not PracticeState.DONE:
+            parts.append(f"Remaining {remaining}")
+        self._stats_var.set("  •  ".join(parts))
 
     # ------------------------------------------------------------------
     # Card flow
@@ -342,11 +346,13 @@ class PracticeScreen(BaseScreen):
         predictor: RecallEstimator | None,
         queue: PracticeQueue,
         waiting: PracticeQueue,
+        today_count: int,
     ) -> None:
         """Init worker finished — install both queues and show the first card."""
         self._predictor = predictor
         self._queue = queue
         self._waiting = waiting
+        self._today_count = today_count
         self._show_current()
 
     def _on_init_error(self, msg: str) -> None:
@@ -361,6 +367,13 @@ class PracticeScreen(BaseScreen):
     ) -> None:
         """Answer worker finished — show result and maybe re-queue the card."""
         self._answered_count += 1
+        answer_day = day_start(practiced_at)
+        if answer_day == self._today_start:
+            self._today_count += 1
+        else:
+            # The session ran past midnight — start the day tally over.
+            self._today_start = answer_day
+            self._today_count = 1
         # This word's stored curve params just changed — the word list's cached
         # due times are now stale.
         self._app.invalidate_due_cache()

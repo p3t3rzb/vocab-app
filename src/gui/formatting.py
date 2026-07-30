@@ -7,6 +7,9 @@ Each function returns a short string suitable for inline labels:
 - :func:`format_due`         — ``"Due now"`` / ``"in 2d 4h"`` / ``"–"``  (None ⇒ "–")
 - :func:`format_timestamp`   — ``"YYYY-MM-DD  HH:MM:SS"``
 
+Plus one plain time helper, :func:`day_start`, which the practice screen uses to
+bound its "practised today" tally.
+
 ``format_future`` and ``format_due`` overlap but have intentionally
 different contracts (none-handling, "due now" vs "–", minute precision)
 and are kept separate.
@@ -70,3 +73,12 @@ def format_due(ts: int | None) -> str:
 def format_timestamp(ts: int) -> str:
     """Format a Unix timestamp as ``"YYYY-MM-DD  HH:MM:SS"``."""
     return datetime.fromtimestamp(ts).strftime("%Y-%m-%d  %H:%M:%S")
+
+
+def day_start(ts: int | None = None) -> int:
+    """Unix timestamp of local midnight starting the day that contains ``ts``.
+
+    ``ts`` defaults to now. Local — not UTC — so "today" means the user's day.
+    """
+    moment = datetime.fromtimestamp(int(time.time()) if ts is None else ts)
+    return int(moment.replace(hour=0, minute=0, second=0, microsecond=0).timestamp())

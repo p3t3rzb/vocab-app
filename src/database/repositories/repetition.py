@@ -65,6 +65,19 @@ class RepetitionRepository(BaseRepository):
             for word_id, direction, latest in self._session.execute(stmt)
         }
 
+    def count_since(self, since: int) -> int:
+        """Count repetition events recorded at or after ``since`` (Unix seconds).
+
+        Counts *events*, not distinct pairs — the same (word, direction) answered
+        twice counts twice. Powers the practice screen's "Today" tally.
+        """
+        stmt = (
+            select(func.count())
+            .select_from(Repetition)
+            .where(Repetition.practiced_at >= since)
+        )
+        return int(self._session.scalar(stmt) or 0)
+
     def add(self, repetition: Repetition) -> None:
         """Stage ``repetition`` for insertion on the next commit."""
         self._session.add(repetition)

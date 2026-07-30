@@ -27,6 +27,7 @@ from src.model.curve import invert_curve
 from src.settings import load_settings
 
 from ..db_context import DbContext
+from ..formatting import day_start
 from .queue_model import Card, build_queue
 
 
@@ -53,7 +54,13 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
             backfill_heuristic_params()
 
         queue, waiting = build_queue(now=int(time.time()), cfg=cfg)
-        out_queue.put(("ready", predictor, queue, waiting))
+
+        # Repetitions already recorded today, before this session started — the
+        # screen adds its own answers on top of this baseline.
+        with get_session() as session:
+            today_count = RepetitionRepository(session).count_since(day_start())
+
+        out_queue.put(("ready", predictor, queue, waiting, today_count))
     except Exception as exc:
         out_queue.put(("error", str(exc)))
 
