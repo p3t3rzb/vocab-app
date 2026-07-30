@@ -44,7 +44,7 @@ class RecallLSTM(nn.Module):
                 (only when ``num_layers > 1``) and before the output head.
             input_size: Number of input features per timestep. Recorded in the
                 checkpoint so older models with a different feature count are
-                rebuilt (and warm-start mismatches detected) correctly.
+                rebuilt correctly on load.
         """
         super().__init__()
         self.hidden_size = hidden_size

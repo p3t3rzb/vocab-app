@@ -63,6 +63,9 @@ class Trainer:
         method — the trainer reads sequences via :func:`get_session` and
         does not initialise the engine itself.
 
+        Every run starts from a fresh random init — an existing checkpoint for
+        this language pair is never resumed from, only overwritten.
+
         The best checkpoint (lowest validation loss seen so far) is saved
         every time validation loss improves, so cancelling mid-training still
         leaves a usable model on disk.
@@ -93,9 +96,6 @@ class Trainer:
         ckpt_path = cfg.checkpoint_dir / f"{pair_name}.pt"
         best_val = math.inf
         best_epoch = 0
-        if cfg.warm_start and self._maybe_warm_start(model, ckpt_path):
-            best_val = self._run_epoch(model, vl_inputs, vl_targets, vl_lengths, None)
-            print(f"Warm start: val loss on current split = {best_val:.5f}")
 
         optimizer = torch.optim.Adam(
             model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
@@ -135,34 +135,6 @@ class Trainer:
         print(f"Checkpoint saved → {ckpt_path}")
 
         return ckpt_path
-
-    def _maybe_warm_start(self, model: RecallLSTM, ckpt_path: Path) -> bool:
-        """Resume training from an existing checkpoint if one is compatible.
-
-        Loads ``ckpt_path`` (if present), and — only when its saved
-        ``hyperparams`` match this run's architecture — copies its weights into
-        ``model`` in place. Returns ``True`` if weights were loaded. The
-        checkpoint's recorded ``val_loss`` is not reused as the baseline: it
-        was measured on a different val split (the underlying repetition data
-        may have changed since the checkpoint was saved), so the caller must
-        re-evaluate val loss on the current split.
-        """
-        if not ckpt_path.exists():
-            print("Warm start: no existing checkpoint — training from scratch.")
-            return False
-
-        ckpt = torch.load(ckpt_path, map_location=self._device, weights_only=True)
-        if ckpt.get("hyperparams") != model.hyperparams():
-            print(
-                "Warm start: checkpoint architecture "
-                f"{ckpt.get('hyperparams')} != config {model.hyperparams()} "
-                "— training from scratch."
-            )
-            return False
-
-        model.load_state_dict(ckpt["state_dict"])
-        print(f"Warm start: resumed weights from {ckpt_path}.")
-        return True
 
     def _pair_name(self) -> str:
         """Resolve the ``<src>_<tgt>`` slug used in the checkpoint filename."""

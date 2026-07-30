@@ -34,10 +34,6 @@ class TrainConfig:
             optimizer step (``torch.nn.utils.clip_grad_norm_``).
         weight_decay: L2 regularization strength passed to the Adam
             optimizer (``0.0`` disables it).
-        warm_start: When ``True`` (default), resume from the existing
-            ``<src>_<tgt>.pt`` checkpoint if one is present and its
-            architecture matches this config. On a mismatch (or no
-            checkpoint), training falls back to a fresh random init.
     """
 
     epochs: int = 100
@@ -53,7 +49,6 @@ class TrainConfig:
     lr_factor: float = 0.5
     grad_clip_max_norm: float = 1.0
     weight_decay: float = 0.0
-    warm_start: bool = True
 
 
 @dataclass
