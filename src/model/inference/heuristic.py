@@ -42,6 +42,7 @@ from src.database.models import Repetition
 
 from ..config import HeuristicConfig, PredictConfig
 from ..curve import invert_curve, recall_at
+from .batch import Params
 
 
 class HeuristicPredictor:
@@ -150,3 +151,54 @@ class HeuristicPredictor:
         return invert_curve(
             p0, s, d, self._config.recall_threshold, self._config.max_delta_seconds
         )
+
+    def post_rep_params(
+        self,
+        histories: list[tuple[list[Repetition], Direction]],
+        practiced_at: int,
+        chunk_size: int | None = None,
+    ) -> list[tuple[Params, Params]]:
+        """Curve params each card would take if it were answered now.
+
+        The model-free counterpart of :meth:`Predictor.post_rep_params`: it
+        appends a hypothetical repetition at ``practiced_at`` to each history —
+        once remembered, once forgotten — and re-runs the SM-2 rule.
+
+        Note that the heuristic's ceilings depend only on the success streak and
+        :attr:`HeuristicConfig.lapse_p0`, never on how long the card has been
+        left, so the ordering it produces is close to plain worst-recalled-first.
+        The scoring only really bites once a trained model is fitting the curves
+        per word.
+
+        Args:
+            histories: One ``(reps, direction)`` per card, each oldest-first. An
+                **empty** history is allowed and means a never-practised card: the
+                hypothetical rep is then the whole history.
+            practiced_at: Unix timestamp of the hypothetical repetition.
+            chunk_size: Accepted for signature-compatibility with
+                :meth:`Predictor.post_rep_params` and ignored — there is no
+                batching to do without a model.
+
+        Returns:
+            One ``(success_params, failure_params)`` per card, in the input order.
+        """
+        out: list[tuple[Params, Params]] = []
+        for reps, direction in histories:
+            word_id = reps[-1].word_id if reps else 0
+            params = tuple(
+                self.curve_params(
+                    reps
+                    + [
+                        Repetition(
+                            word_id=word_id,
+                            direction=int(direction),
+                            practiced_at=practiced_at,
+                            remembered=remembered,
+                        )
+                    ],
+                    direction,
+                )
+                for remembered in (True, False)
+            )
+            out.append(params)  # type: ignore[arg-type]
+        return out

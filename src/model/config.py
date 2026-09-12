@@ -127,8 +127,16 @@ class ScheduleConfig:
     """Batched param-computation knobs for :class:`ParamScheduler`.
 
     Attributes:
-        chunk_size: Number of words processed per batched LSTM forward.
-            Trades GPU dispatch overhead against memory footprint.
+        chunk_size: Number of words per commit-and-report chunk. Bounds how much
+            work a cancellation can discard and how often progress is reported;
+            it does *not* set the tensor shape.
+        batch_sequences: Number of sequences per batched LSTM forward. Each word
+            contributes up to six (two directions × the current curve plus the two
+            a review would produce), so this is the knob that actually sets memory
+            footprint. Keep it at a few hundred: throughput is flat from 64 to 512
+            but degrades sharply above that — measured on MPS, 14,190 sequences
+            take ~14 s at 256, ~107 s at 1024 and ~375 s at 2048.
     """
 
     chunk_size: int = 256
+    batch_sequences: int = 256

@@ -14,9 +14,12 @@ import threading
 from pathlib import Path
 
 from src.database import init_db
-from src.model import backfill_heuristic_params, compute_all_params
+from src.model import compute_all_params
 from src.model import train as run_training
 from src.model.config import TrainConfig
+
+from ..db_context import DbContext
+from ..model_sync import force_heuristic_params
 
 
 def training_worker(
@@ -66,20 +69,20 @@ def schedule_worker(
 
 
 def delete_model_worker(
-    model_path: Path,
+    ctx: DbContext,
     out_queue: queue_module.Queue,
 ) -> None:
     """Delete the checkpoint, then re-derive every word's params heuristically.
 
     Removing the file alone would leave the stored curve params as the deleted
     model computed them, so the app would keep scheduling from a model it no
-    longer has. :func:`backfill_heuristic_params` rewrites the params of every
+    longer has. :func:`force_heuristic_params` rewrites the params of every
     word with history from :class:`HeuristicPredictor`, which is exactly what
     practice falls back to once the checkpoint is gone.
     """
     try:
-        model_path.unlink(missing_ok=True)
-        count = backfill_heuristic_params()
+        ctx.model_path.unlink(missing_ok=True)
+        count = force_heuristic_params(ctx)
         out_queue.put(("delete_done", count))
     except Exception as exc:
         out_queue.put(("delete_error", str(exc)))

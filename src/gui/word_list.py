@@ -18,9 +18,11 @@ from src.database.models import Word
 from src.model.config import PredictConfig
 from src.model.curve import invert_curve
 from src.settings import load_settings
+from .background import BackgroundJob
 from .base_screen import BaseScreen
 from .formatting import format_due, format_past
-from .theme import Colors, Fonts
+from .model_sync import needs_heuristic_sync, sync_worker
+from .theme import Colors, Fonts, PollIntervals
 from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_header, build_tree
 
 
@@ -86,7 +88,13 @@ class WordListScreen(BaseScreen):
         self._due_cache: dict[int, tuple[int | None, int | None]] = {}
         super().__init__(master)
         init_db(self._ctx.db_url, self._ctx.src_lang, self._ctx.tgt_lang)
+        self._sync_job = BackgroundJob(
+            self,
+            handlers={"synced": self._on_params_synced, "sync_error": self._on_sync_error},
+            poll_ms=PollIntervals.MS,
+        )
         self._load_words()
+        self._sync_params_if_untrained()
 
     # ------------------------------------------------------------------
     # UI
@@ -211,6 +219,31 @@ class WordListScreen(BaseScreen):
                     _build_due_cache(self._all_words, last_by_dir, cfg)
                 )
         self._due_cache = self._app.due_cache or {}
+        self._apply_filter()
+
+    def _sync_params_if_untrained(self) -> None:
+        """Re-derive due times heuristically when the pair's checkpoint is gone.
+
+        Without this the table (and everything downstream of the stored params)
+        would keep showing dates scheduled by a model that no longer exists.
+        The recompute reads the whole repetition table, so it runs off the main
+        thread and at most once per database per app run.
+        """
+        if not needs_heuristic_sync(self._ctx):
+            return
+        self._count_label.configure(text="recomputing due times…")
+        self._sync_job.start(sync_worker, self._ctx, self._sync_job.queue)
+
+    def _on_params_synced(self, count: int) -> None:
+        """Params were rewritten — drop the stale due cache and re-render."""
+        if count:
+            self._app.invalidate_due_cache()
+            self._load_words()
+        else:
+            self._apply_filter()  # nothing changed; just restore the count label
+
+    def _on_sync_error(self, _msg: str) -> None:
+        """Leave the existing due times in place; restore the count label."""
         self._apply_filter()
 
     def _apply_filter(self) -> None:

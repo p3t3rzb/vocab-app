@@ -12,6 +12,10 @@ Public surface:
 * :class:`Trainer`, :func:`train` — training entry points.
 * :func:`compute_all_params` — batched recomputation of every word's curve params.
 * :func:`backfill_heuristic_params` — the same, model-free, for untrained pairs.
+* :func:`retained_seconds`, :func:`expected_retained`, :func:`expected_gain` —
+  the area under a forgetting curve, the expected area a card would hold after a
+  review, and the increase that review buys over leaving the card alone. The last
+  is the practice queue's ordering key.
 """
 from .checkpoint import load_model
 from .config import (
@@ -20,7 +24,15 @@ from .config import (
     ScheduleConfig,
     TrainConfig,
 )
-from .curve import curve_recall, invert_curve, next_delta, recall_at
+from .curve import (
+    curve_recall,
+    expected_gain,
+    expected_retained,
+    invert_curve,
+    next_delta,
+    recall_at,
+    retained_seconds,
+)
 from .inference import (
     HeuristicPredictor,
     Predictor,
@@ -39,6 +51,9 @@ __all__ = [
     "RecallLSTM",
     "curve_recall",
     "recall_at",
+    "retained_seconds",
+    "expected_retained",
+    "expected_gain",
     "invert_curve",
     "next_delta",
     "load_model",

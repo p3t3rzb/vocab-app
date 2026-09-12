@@ -1,21 +1,35 @@
 """Batched param computation: persist each word's forgetting-curve params.
 
 Words are processed in chunks of :attr:`ScheduleConfig.chunk_size`. Within each
-chunk every (word, direction) history is forwarded through the model in a single
-batched call to get its forgetting-curve parameters ``(p0, S, d)``, which are
-stored on the word. Recall score and the next-review time are derived from these
-params *live* (see :mod:`src.model.curve`), so the recall threshold can change
-without recomputing anything here.
+chunk every (word, direction) is forwarded through the model in a single batched
+call to get **three** curves' worth of ``(p0, S, d)``, all stored on the word:
+
+* the *current* curve, from the history as it stands — the one recall and the
+  next-review time are derived from,
+* the curve a *remembered* answer right now would produce,
+* the curve a *forgotten* answer right now would produce.
+
+The practice queue needs all three to rank cards by how much recall a review
+*adds* over leaving the card alone (:func:`src.model.curve.expected_gain`) —
+the current curve is the do-nothing baseline it is measured against. Three
+sequences per card is far too much work to do at session start, so it happens
+here instead. They are
+computed for directions with no history too, since a never-practised card still
+has to be ranked — only the *current* curve stays ``NULL`` there, which is what
+marks a card as new.
+
+Everything derived from these params — recall score, next-review time, queue
+score — is computed *live* (see :mod:`src.model.curve`), so the recall threshold
+and horizon can change without recomputing anything here.
 """
 from __future__ import annotations
 
-import math
 import threading
+import time
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
 
-import torch
 from sqlalchemy import select, update as sa_update
 
 from src.database import Direction, get_session
@@ -23,14 +37,16 @@ from src.database.models import Repetition, Word
 
 from ..checkpoint import load_model
 from ..config import HeuristicConfig, ScheduleConfig
-from ..curve import split_params
+from ..features import history_rows, rep_row
 from ..lstm import RecallLSTM
+from .batch import Params, final_step_params
 from .heuristic import HeuristicPredictor
 
 ProgressFn = Callable[[int, int], None]
 
-# A direction's curve params, or None when that direction has no history.
-Params = tuple[float, float, float]
+#: One direction's three curves: ``(current, after_remembered, after_forgotten)``.
+#: ``current`` is ``None`` when that direction has no history yet.
+CardCurves = tuple[Params | None, Params, Params]
 
 
 class ParamScheduler:
@@ -68,13 +84,16 @@ class ParamScheduler:
 
         total = len(all_words)
         chunk_size = self._schedule_cfg.chunk_size
+        # One timestamp for the whole pass: the hypothetical "practised now" rep
+        # is dated from it, so every card is scored against the same moment.
+        now = int(time.time())
 
         for chunk_start in range(0, total, chunk_size):
             if stop_event is not None and stop_event.is_set():
                 return
 
             chunk = all_words[chunk_start : chunk_start + chunk_size]
-            chunk_updates = self._process_chunk(chunk, reps_map)
+            chunk_updates = self._process_chunk(chunk, reps_map, now)
 
             if chunk_updates:
                 _persist_params(chunk_updates)
@@ -86,87 +105,96 @@ class ParamScheduler:
         self,
         words: list[Word],
         reps_map: dict[tuple[int, int], list[Repetition]],
-    ) -> dict[int, tuple[Params | None, Params | None]]:
-        """Forward every (word, direction) history once and read off the curve params.
+        now: int,
+    ) -> dict[int, tuple[CardCurves, CardCurves]]:
+        """Forward every (word, direction) and read off its three curves.
 
-        Returns ``{word_id: (fwd_params, rev_params)}`` for every word in the
-        chunk. Directions with no history yield ``None``, which the persistence
-        step writes as SQL ``NULL`` so the word stays "not yet computed".
+        Each direction contributes up to three sequences: its history as-is
+        (omitted when there is none), and that history with a hypothetical
+        remembered / forgotten rep dated ``now`` appended. They are forwarded in
+        batches of :attr:`ScheduleConfig.batch_sequences` — a chunk of words is
+        far too many sequences to shape into one tensor.
+
+        Returns ``{word_id: (fwd_curves, rev_curves)}`` for every word in the
+        chunk.
         """
-        keys: list[tuple[int, int]] = []
+        slots: list[tuple[tuple[int, int], int]] = []
         sequences: list[list[list[float]]] = []
 
         for word in words:
             for direction in Direction:
-                reps = reps_map.get((word.id, int(direction)), [])
-                if not reps:
-                    continue
-                keys.append((word.id, int(direction)))
-                sequences.append(self._history_rows(reps, direction))
+                key = (word.id, int(direction))
+                reps = reps_map.get(key, [])
+                rows = history_rows(reps, direction)
+                gap = float(now - reps[-1].practiced_at) if reps else 0.0
+                if reps:
+                    slots.append((key, 0))
+                    sequences.append(rows)
+                slots.append((key, 1))
+                sequences.append(rows + [rep_row(gap, True, direction)])
+                slots.append((key, 2))
+                sequences.append(rows + [rep_row(gap, False, direction)])
 
-        results: dict[tuple[int, int], Params] = {}
-        if keys:
-            params = self._curve_params(sequences)
-            for key, p in zip(keys, params):
-                results[key] = p
+        by_key: dict[tuple[int, int], list[Params | None]] = defaultdict(
+            lambda: [None, None, None]
+        )
+        for (key, which), params in zip(
+            slots,
+            final_step_params(
+                self._model,
+                sequences,
+                chunk_size=self._schedule_cfg.batch_sequences,
+            ),
+        ):
+            by_key[key][which] = params
+
+        def curves(key: tuple[int, int]) -> CardCurves:
+            current, ok, no = by_key[key]
+            # `ok` / `no` are always produced above; the cast documents that.
+            return current, ok, no  # type: ignore[return-value]
 
         return {
             word.id: (
-                results.get((word.id, int(Direction.FORWARD))),
-                results.get((word.id, int(Direction.REVERSE))),
+                curves((word.id, int(Direction.FORWARD))),
+                curves((word.id, int(Direction.REVERSE))),
             )
             for word in words
         }
 
-    @staticmethod
-    def _history_rows(reps: list[Repetition], direction: Direction) -> list[list[float]]:
-        """History-only LSTM input: ``[log(gap-before-this-rep + 1), remembered, not_remembered, is_forward, is_reverse]`` per rep."""
-        is_rev = float(int(direction))
-        is_fwd = 1.0 - is_rev
-        rows: list[list[float]] = []
-        for i, rep in enumerate(reps):
-            log_gap = 0.0 if i == 0 else math.log(rep.practiced_at - reps[i - 1].practiced_at + 1)
-            rem = float(rep.remembered)
-            rows.append([log_gap, rem, 1.0 - rem, is_fwd, is_rev])
-        return rows
 
-    def _curve_params(self, sequences: list[list[list[float]]]) -> list[Params]:
-        """Batched forward → final-timestep ``(p0, S, d)`` per task."""
-        lengths = [len(s) for s in sequences]
-        max_len = max(lengths)
-        n_features = len(sequences[0][0])
-        batch = torch.zeros(len(sequences), max_len, n_features, dtype=torch.float32, device=self._device)
-        for i, seq in enumerate(sequences):
-            batch[i, : lengths[i]] = torch.tensor(seq, dtype=torch.float32)
+def _column_values(prefix: str, curves: CardCurves) -> dict[str, float | None]:
+    """Flatten one direction's three curves into its nine ``words`` columns.
 
-        with torch.inference_mode():
-            raw = self._model(batch)  # (B, max_len, 3)
+    ``prefix`` is ``"fwd"`` or ``"rev"``; the current curve takes the bare
+    ``<prefix>_p0`` / ``_s`` / ``_d`` names and the two hypothetical ones the
+    ``_ok`` / ``_no`` variants. A ``None`` curve clears its three columns to SQL
+    ``NULL``.
+    """
+    values: dict[str, float | None] = {}
+    for suffix, params in zip(("", "_ok", "_no"), curves):
+        p0, s, d = params if params is not None else (None, None, None)
+        values[f"{prefix}{suffix}_p0"] = p0
+        values[f"{prefix}{suffix}_s"] = s
+        values[f"{prefix}{suffix}_d"] = d
+    return values
 
-        idx = torch.tensor([n - 1 for n in lengths], device=self._device)
-        raw_last = raw[torch.arange(len(sequences), device=self._device), idx]  # (B, 3)
-
-        p0, s, d = split_params(raw_last)  # each (B,)
-        return list(zip(p0.tolist(), s.tolist(), d.tolist()))
 
 def _persist_params(
-    chunk_updates: dict[int, tuple[Params | None, Params | None]],
+    chunk_updates: dict[int, tuple[CardCurves, CardCurves]],
 ) -> None:
-    """Write per-direction curve params for a chunk of words in one short session.
+    """Write both directions' curve params for a chunk of words in one session.
 
-    A ``None`` direction clears its three columns to SQL ``NULL`` (no history
-    yet), so the word list renders "–" until that direction is practiced.
+    A direction with no history has a ``None`` *current* curve, so its three
+    ``<dir>_p0/_s/_d`` columns go to SQL ``NULL`` — the word list renders "–" and
+    the practice queue treats the card as new. Its two post-review curves are
+    still written, because a new card has to be ranked like any other.
     """
     with get_session() as session:
         for word_id, (fwd, rev) in chunk_updates.items():
-            fwd_p0, fwd_s, fwd_d = fwd if fwd is not None else (None, None, None)
-            rev_p0, rev_s, rev_d = rev if rev is not None else (None, None, None)
             session.execute(
                 sa_update(Word)
                 .where(Word.id == word_id)
-                .values(
-                    fwd_p0=fwd_p0, fwd_s=fwd_s, fwd_d=fwd_d,
-                    rev_p0=rev_p0, rev_s=rev_s, rev_d=rev_d,
-                )
+                .values(**_column_values("fwd", fwd), **_column_values("rev", rev))
             )
 
 
@@ -177,13 +205,15 @@ def backfill_heuristic_params(
 
     The model-free counterpart of :func:`compute_all_params`, for a language pair
     that has no checkpoint yet: it runs :class:`HeuristicPredictor` over every
-    (word, direction) that has history and persists the resulting ``(p0, S, d)``.
-    Without it, repetitions recorded before a pair had any estimator would sit at
-    ``NULL`` — practised, but unscheduled and rendered "–" in the word list —
-    until each was answered once more.
+    (word, direction) and persists the resulting current and post-review
+    ``(p0, S, d)``. Without it, repetitions recorded before a pair had any
+    estimator would sit at ``NULL`` — practised, but unscheduled and rendered "–"
+    in the word list — until each was answered once more.
 
-    Only words that actually have history are touched, so untouched words keep
-    their ``NULL`` params and stay in the practice queue's "new" bucket.
+    Every word is touched, not only the ones with history: the post-review curves
+    are what the practice queue ranks on, and a never-practised card needs them
+    too. A direction with no history still gets a ``NULL`` *current* curve, which
+    is what keeps it marked as new.
 
     Args:
         heuristic_cfg: Override the default :class:`HeuristicConfig`.
@@ -194,6 +224,7 @@ def backfill_heuristic_params(
     predictor = HeuristicPredictor(heuristic_config=heuristic_cfg)
 
     with get_session() as session:
+        word_ids = list(session.scalars(select(Word.id).order_by(Word.id)))
         all_reps = list(
             session.scalars(
                 select(Repetition).order_by(
@@ -206,14 +237,16 @@ def backfill_heuristic_params(
     for rep in all_reps:
         reps_map[(rep.word_id, rep.direction)].append(rep)
 
-    updates: dict[int, tuple[Params | None, Params | None]] = {}
-    for word_id in {word_id for word_id, _ in reps_map}:
-        updates[word_id] = tuple(  # type: ignore[assignment]
-            predictor.curve_params(reps, direction)
-            if (reps := reps_map.get((word_id, int(direction))))
-            else None
-            for direction in Direction
-        )
+    now = int(time.time())
+    updates: dict[int, tuple[CardCurves, CardCurves]] = {}
+    for word_id in word_ids:
+        per_direction: list[CardCurves] = []
+        for direction in Direction:
+            reps = reps_map.get((word_id, int(direction)), [])
+            current = predictor.curve_params(reps, direction) if reps else None
+            ok, no = predictor.post_rep_params([(reps, direction)], now)[0]
+            per_direction.append((current, ok, no))
+        updates[word_id] = (per_direction[0], per_direction[1])
 
     if updates:
         _persist_params(updates)

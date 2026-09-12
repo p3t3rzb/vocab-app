@@ -7,16 +7,16 @@ probability at a given gap and into an analytically-derived next-review time
 """
 from __future__ import annotations
 
-import math
-
 import torch
 
 from src.database import Direction
 from src.database.models import Repetition
 
-from ..config import PredictConfig
+from ..config import PredictConfig, ScheduleConfig
 from ..curve import curve_recall, next_delta, split_params
+from ..features import history_rows, rep_row
 from ..lstm import RecallLSTM
+from .batch import Params, final_step_params
 
 
 class Predictor:
@@ -39,6 +39,11 @@ class Predictor:
         """Expose the active prediction config (used by the predict CLI)."""
         return self._config
 
+    @property
+    def model(self) -> RecallLSTM:
+        """The wrapped network, for callers running their own batched forwards."""
+        return self._model
+
     def _curve_params(self, reps: list[Repetition], direction: Direction) -> torch.Tensor:
         """Forward the history and return the curve params for the next test.
 
@@ -50,14 +55,7 @@ class Predictor:
         if not reps:
             raise ValueError("Need at least one historical repetition")
 
-        is_rev = float(int(direction))
-        is_fwd = 1.0 - is_rev
-        rows: list[list[float]] = []
-        for i, rep in enumerate(reps):
-            log_gap = 0.0 if i == 0 else math.log(rep.practiced_at - reps[i - 1].practiced_at + 1)
-            rem = float(rep.remembered)
-            rows.append([log_gap, rem, 1.0 - rem, is_fwd, is_rev])
-
+        rows = history_rows(reps, direction)
         x = torch.tensor(rows, dtype=torch.float32, device=self._device).unsqueeze(0)
         with torch.no_grad():
             raw = self._model(x)  # (1, L, 3)
@@ -108,3 +106,46 @@ class Predictor:
         return next_delta(
             raw_last, self._config.recall_threshold, self._config.max_delta_seconds
         )
+
+    def post_rep_params(
+        self,
+        histories: list[tuple[list[Repetition], Direction]],
+        practiced_at: int,
+        chunk_size: int | None = None,
+    ) -> list[tuple[Params, Params]]:
+        """Curve params each card would take if it were answered now.
+
+        Appends a *hypothetical* repetition at ``practiced_at`` to each history —
+        once remembered, once forgotten — and reads off the curve the model fits
+        afterwards. Feeding both outcomes through the same batched forward keeps
+        the cost at one pass per chunk, which is what makes precomputing these for
+        every card in the deck affordable (see
+        :class:`~src.model.inference.scheduler.ParamScheduler`).
+
+        Args:
+            histories: One ``(reps, direction)`` per card, each oldest-first. An
+                **empty** history is allowed and means a never-practised card: the
+                hypothetical rep is then the whole sequence, with a zero gap.
+            practiced_at: Unix timestamp of the hypothetical repetition; its gap
+                from each history's last rep becomes the appended row's input.
+            chunk_size: Sequences per batched forward — two per card. Defaults to
+                :attr:`ScheduleConfig.batch_sequences`.
+
+        Returns:
+            One ``(success_params, failure_params)`` per card, in the input order.
+        """
+        sequences: list[list[list[float]]] = []
+        for reps, direction in histories:
+            rows = history_rows(reps, direction)
+            gap = practiced_at - reps[-1].practiced_at if reps else 0.0
+            sequences.append(rows + [rep_row(gap, True, direction)])
+            sequences.append(rows + [rep_row(gap, False, direction)])
+
+        params = final_step_params(
+            self._model,
+            sequences,
+            chunk_size=chunk_size or ScheduleConfig().batch_sequences,
+        )
+        return [
+            (params[2 * i], params[2 * i + 1]) for i in range(len(histories))
+        ]

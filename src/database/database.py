@@ -100,15 +100,25 @@ class Database:
     def _run_migrations(engine: Engine) -> None:
         """Migrate pre-existing databases to the per-direction curve-param columns.
 
-        Adds the six ``fwd_*`` / ``rev_*`` REAL columns if missing and drops the
+        Adds the six current-curve ``fwd_*`` / ``rev_*`` REAL columns and the
+        twelve post-review ``*_ok_*`` / ``*_no_*`` ones if missing, and drops the
         obsolete due-timestamp columns (``next_repetition_at`` and the
         per-direction ``next_rep_fwd_at`` / ``next_rep_rev_at``). ``DROP COLUMN``
         requires SQLite ≥ 3.35, bundled with Python 3.13.
+
+        The new columns arrive NULL; the practice queue shows such cards first so
+        they get rescored, and one param pass fills them in.
         """
         with engine.connect() as conn:
             cols = [row[1] for row in conn.execute(text("PRAGMA table_info(words)"))]
             changed = False
-            for col_name in ("fwd_p0", "fwd_s", "fwd_d", "rev_p0", "rev_s", "rev_d"):
+            curve_cols = [
+                f"{direction}{outcome}_{param}"
+                for direction in ("fwd", "rev")
+                for outcome in ("", "_ok", "_no")
+                for param in ("p0", "s", "d")
+            ]
+            for col_name in curve_cols:
                 if col_name not in cols:
                     conn.execute(text(f"ALTER TABLE words ADD COLUMN {col_name} REAL"))
                     changed = True

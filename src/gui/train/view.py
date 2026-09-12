@@ -18,6 +18,7 @@ from src.model.config import TrainConfig
 
 from ..background import BackgroundJob
 from ..base_screen import BaseScreen
+from ..model_sync import note_model_params
 from ..theme import Colors, Defaults, Fonts, Limits, PollIntervals, Spacing
 from ..widgets import build_header
 from .plot import LossPlot
@@ -197,6 +198,9 @@ class TrainScreen(BaseScreen):
 
     def _on_training_done(self, checkpoint_path: str) -> None:
         """Training finished — start the schedule recalc phase."""
+        # From here the params are the new model's, so deleting the checkpoint
+        # later in this session must trigger a fresh heuristic recompute.
+        note_model_params(self._ctx)
         self._progress.stop()
         self._progress.configure(mode="determinate")
         self._progress.set(0)
@@ -269,7 +273,7 @@ class TrainScreen(BaseScreen):
         self._progress.start()
 
         self._delete_job.start(
-            delete_model_worker, self._ctx.model_path, self._delete_job.queue,
+            delete_model_worker, self._ctx, self._delete_job.queue,
         )
 
     def _on_delete_done(self, count: int) -> None:

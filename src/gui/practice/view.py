@@ -19,7 +19,7 @@ from ..base_screen import BaseScreen
 from ..formatting import day_start, format_future, format_past
 from ..theme import Fonts, Hints, PollIntervals, Spacing
 from ..widgets import build_header
-from .queue_model import Card, PracticeQueue
+from .queue_model import ERROR_PRIORITY, Card, PracticeQueue, card_gain
 from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
 
@@ -278,22 +278,43 @@ class PracticeScreen(BaseScreen):
     # Card flow
     # ------------------------------------------------------------------
 
+    def _horizon(self) -> float | None:
+        """Window a gain is scored over, or ``None`` when there is no estimator.
+
+        The user's interval cap doubles as the retention horizon. The ordering is
+        close to horizon-independent but not exactly so — unlike a retention
+        *level*, a gain is a difference of two nearly-equal integrals, so the
+        horizon survives in it. On the French deck the served order correlates
+        ρ ≈ 0.98 between a 30-day and a 2-year horizon and ρ > 0.999 between a year
+        and two, reshuffling only near-tied cards; which cards lead a session does
+        not change. So the cap is a reasonable stand-in, but it is a mild tuning
+        knob rather than a pure choice of units.
+        """
+        if self._predictor is None:
+            return None
+        return self._predictor.config.max_delta_seconds
+
     def _promote_due(self) -> None:
         """Move every waiting card whose due time has passed into the main heap.
 
-        A just-due card has ``recall ≈ threshold`` by construction, so the
-        recall threshold is the right main-heap priority — it slots in at the
-        least-urgent end of the due cards.
+        The card is re-scored on the way across rather than reusing the score it
+        was built with: a gain depends on how long the card has been waiting (see
+        :func:`src.model.curve.expected_gain`), and the whole point of parking it
+        was that time would pass. Only a session with no estimator at all has no
+        horizon to score against, and that session never re-queues anything.
         """
         now = int(time.time())
-        threshold = self._predictor.config.recall_threshold if self._predictor else 1.0
+        horizon = self._horizon()
         while True:
             due_ts = self._waiting.peek_priority()
             if due_ts is None or due_ts > now:
                 break
             card = self._waiting.pop()
-            if card is not None:
-                self._queue.push(card, threshold)
+            if card is None:
+                continue
+            if horizon is not None:
+                card.score = card_gain(card, now, horizon)
+            self._queue.push(card, -card.score)
 
     def _show_current(self) -> None:
         """Pop and render the next-most-urgent card, or transition to DONE when empty."""
@@ -363,7 +384,11 @@ class PracticeScreen(BaseScreen):
         card: Card,
         practiced_at: int,
         next_ts: int | None,
-        recall_now: float | None,
+        curves: tuple[
+            tuple[float, float, float] | None,
+            tuple[float, float, float] | None,
+            tuple[float, float, float] | None,
+        ],
     ) -> None:
         """Answer worker finished — show result and maybe re-queue the card."""
         self._answered_count += 1
@@ -386,17 +411,32 @@ class PracticeScreen(BaseScreen):
             self._next_var.set(f"next repetition {format_future(delta)}{note}")
 
         if next_ts is not None:
+            current, success, failure = curves
             refreshed = Card(
                 word_id=card.word_id,
                 direction=card.direction,
                 source_text=card.source_text,
                 target_text=card.target_text,
                 last_practiced=practiced_at,
+                score=0.0,
+                current=current,
+                success=success,
+                failure=failure,
+                new_card_recall=card.new_card_recall,
             )
-            if next_ts <= int(time.time()):
+            now = int(time.time())
+            horizon = self._horizon()
+            if success is None or failure is None or horizon is None:
+                # Nothing to score the card from — send it to the back rather than
+                # the front.
+                self._queue.push(refreshed, ERROR_PRIORITY)
+            elif next_ts <= now:
                 # Still due right after this attempt — re-queue at its
-                # recall-sorted position so it returns later in the session.
-                self._queue.push(refreshed, recall_now if recall_now is not None else 0.0)
+                # score-sorted position so it returns later in the session. It is
+                # re-scored again if it waits, so this score only has to order it
+                # against the queue as it stands now.
+                refreshed.score = card_gain(refreshed, now, horizon)
+                self._queue.push(refreshed, -refreshed.score)
             else:
                 # Due in the future — park it in the waiting heap so it can be
                 # promoted back if it comes due before the session ends.

@@ -20,7 +20,6 @@ from src.model import (
     HeuristicPredictor,
     Predictor,
     RecallEstimator,
-    backfill_heuristic_params,
     load_model,
 )
 from src.model.curve import invert_curve
@@ -28,6 +27,7 @@ from src.settings import load_settings
 
 from ..db_context import DbContext
 from ..formatting import day_start
+from ..model_sync import ensure_heuristic_params
 from .queue_model import Card, build_queue
 
 
@@ -39,10 +39,12 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
     gets real due times from its very first answer, which is what eventually
     produces the history a model can be trained on.
 
-    In the untrained case any history recorded while the pair had no estimator
-    at all is backfilled first, so those words enter the queue properly scored
-    rather than sitting in the unscored bucket. It only touches words that have
-    repetitions, so it is a no-op on a pair that has never been practised.
+    In the untrained case the stored params are reconciled with the heuristic
+    first (see :mod:`src.gui.model_sync`), so history recorded while the pair
+    had no estimator — or scheduled by a checkpoint that has since been
+    deleted — enters the queue correctly scored instead of sitting in the
+    unscored bucket or on a date no live estimator would produce. It only
+    touches words that have repetitions, and only once per app run.
     """
     try:
         cfg = load_settings().to_predict_config()
@@ -51,7 +53,7 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
             predictor = Predictor(load_model(str(ctx.model_path)), cfg)
         else:
             predictor = HeuristicPredictor(cfg)
-            backfill_heuristic_params()
+            ensure_heuristic_params(ctx)
 
         queue, waiting = build_queue(now=int(time.time()), cfg=cfg)
 
@@ -71,17 +73,26 @@ def answer_worker(
     predictor: RecallEstimator | None,
     out_queue: queue_module.Queue,
 ) -> None:
-    """Record one repetition, store its recomputed curve params, derive due/recall.
+    """Record one repetition, store its recomputed curves, and derive the due time.
 
-    Returns ``("answered", card, practiced_at, next_ts, recall_now)`` where
-    ``next_ts`` is the live next-review timestamp (``None`` if no estimator) and
-    ``recall_now`` is the recall ceiling ``p0`` right after this rep — the
-    priority used if the card has to be re-queued.
+    Recomputes all three of the direction's curves from the history including the
+    answer just given — the current one plus the two a further review would
+    produce — so the word stays scoreable without waiting for the next full param
+    pass.
+
+    Returns ``("answered", card, practiced_at, next_ts, curves)`` where ``next_ts``
+    is the live next-review timestamp (``None`` if no estimator) and ``curves`` is
+    the ``(current, success, failure)`` triple just stored, each ``None`` if they
+    could not be computed. Scoring is left to the caller, which owns the moment the
+    card is actually served — a gain depends on that moment, so computing one here
+    would only date it to the answer instead.
     """
     try:
         practiced_at = int(time.time())
         next_ts: int | None = None
-        recall_now: float | None = None
+        current: tuple[float, float, float] | None = None
+        success: tuple[float, float, float] | None = None
+        failure: tuple[float, float, float] | None = None
 
         with get_session() as session:
             reps_repo = RepetitionRepository(session)
@@ -99,24 +110,34 @@ def answer_worker(
                 all_reps = reps_repo.get_for_word(card.word_id, card.direction)
                 cfg = predictor.config
                 try:
-                    p0, s, d = predictor.curve_params(all_reps, card.direction)
+                    current = predictor.curve_params(all_reps, card.direction)
+                    success, failure = predictor.post_rep_params(
+                        [(all_reps, card.direction)], practiced_at
+                    )[0]
+                    p0, s, d = current
                     delta = invert_curve(
                         p0, s, d, cfg.recall_threshold, cfg.max_delta_seconds
                     )
                     next_ts = practiced_at + int(delta)
-                    recall_now = p0
                 except Exception:
-                    p0 = s = d = None
+                    # Leave the curves NULL so the next param pass recomputes
+                    # them; the caller sorts an unscoreable card to the back.
+                    current = success = failure = None
                     next_ts = 0
-                    recall_now = 0.0
 
                 word = WordRepository(session).get_by_id(card.word_id)
                 if word is not None:
-                    if card.direction is Direction.FORWARD:
-                        word.fwd_p0, word.fwd_s, word.fwd_d = p0, s, d
-                    else:
-                        word.rev_p0, word.rev_s, word.rev_d = p0, s, d
+                    prefix = "fwd" if card.direction is Direction.FORWARD else "rev"
+                    for suffix, trio in zip(
+                        ("", "_ok", "_no"), (current, success, failure)
+                    ):
+                        cp0, cs, cd = trio if trio is not None else (None, None, None)
+                        setattr(word, f"{prefix}{suffix}_p0", cp0)
+                        setattr(word, f"{prefix}{suffix}_s", cs)
+                        setattr(word, f"{prefix}{suffix}_d", cd)
 
-        out_queue.put(("answered", card, practiced_at, next_ts, recall_now))
+        out_queue.put(
+            ("answered", card, practiced_at, next_ts, (current, success, failure))
+        )
     except Exception as exc:
         out_queue.put(("answer_error", str(exc)))

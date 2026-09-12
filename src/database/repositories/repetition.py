@@ -1,4 +1,6 @@
 """Query and insert helpers for :class:`Repetition`."""
+from collections import defaultdict
+
 from sqlalchemy import func, select
 
 from ..models import Direction, Repetition
@@ -64,6 +66,53 @@ class RepetitionRepository(BaseRepository):
             (word_id, direction): latest
             for word_id, direction, latest in self._session.execute(stmt)
         }
+
+    def history_by_word_direction(self) -> dict[tuple[int, int], list[Repetition]]:
+        """Group the whole table into per-(word, direction) histories, oldest first.
+
+        One query for every repetition — the bulk counterpart of
+        :meth:`get_for_word`, for callers that need many histories at once (the
+        param scheduler forwards every card's history in batched passes).
+        Keys are ``(word_id, direction_int)``; pairs with no history are absent.
+        """
+        stmt = select(Repetition).order_by(
+            Repetition.word_id, Repetition.direction, Repetition.practiced_at
+        )
+        histories: dict[tuple[int, int], list[Repetition]] = defaultdict(list)
+        for rep in self._session.scalars(stmt):
+            histories[(rep.word_id, rep.direction)].append(rep)
+        return histories
+
+    def first_attempt_success_rate(self, default: float = 0.5) -> float:
+        """Fraction of (word, direction) pairs remembered on their *first* attempt.
+
+        Stands in for "current recall" when the practice queue scores a
+        never-practised card: there is no curve to evaluate yet, but the deck's
+        own history says how often a first exposure goes well, and that is the
+        probability the expected-retention score needs to weight the remembered
+        and forgotten branches by.
+
+        Args:
+            default: Returned when the table is empty (a brand-new database).
+
+        Returns:
+            The mean outcome of every pair's earliest repetition, in ``[0, 1]``.
+        """
+        earliest = (
+            select(
+                Repetition.remembered.label("remembered"),
+                func.row_number()
+                .over(
+                    partition_by=(Repetition.word_id, Repetition.direction),
+                    order_by=(Repetition.practiced_at, Repetition.id),
+                )
+                .label("rn"),
+            )
+            .subquery()
+        )
+        stmt = select(func.avg(earliest.c.remembered)).where(earliest.c.rn == 1)
+        rate = self._session.scalar(stmt)
+        return default if rate is None else float(rate)
 
     def count_since(self, since: int) -> int:
         """Count repetition events recorded at or after ``since`` (Unix seconds).
