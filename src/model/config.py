@@ -57,7 +57,9 @@ class PredictConfig:
 
     The next-review time is found by inverting the predicted forgetting curve
     analytically (see :func:`src.model.curve.next_delta`), so only the recall
-    threshold and the hard interval cap are needed.
+    threshold and the hard interval cap are needed. Inverting an exponential is
+    linear in the half-life, so the threshold scales every word's interval by the
+    same factor: at ``0.8`` a word is reviewed after ``0.32 × H``.
 
     Attributes:
         recall_threshold: P(recall) level below which a word is due for review.
@@ -78,36 +80,29 @@ class HeuristicConfig:
     consumed exactly like a trained model's.
 
     ``reference_threshold`` is deliberately a constant here rather than the
-    user's :class:`PredictConfig` setting: the stored ``(p0, S, d)`` must stay
+    user's :class:`PredictConfig` setting: the stored half-life must stay
     threshold-independent (the user's threshold is applied live, downstream).
     It is the recall level at which the intervals below are the ones actually
     produced; raising the user's threshold shortens them from there.
 
     Attributes:
         reference_threshold: Recall level the intervals below are calibrated at.
-        decay: The curve's decay exponent ``d``, held fixed — with ``S`` solved
-            per word, ``d`` only sets the curve's shape, not its due time.
         first_interval: Interval after the first successful rep, and after the
             first success following a lapse (SM-2 restarts the ladder rather
             than resuming it). Doubles as the floor under every success, so a
             card relearned mid-session graduates out of the session instead of
             ramping up from the seconds-scale gap a re-queue leaves behind.
-        relearn_interval: Time-scale used right after a failed rep.
+        relearn_interval: Interval assigned right after a failed rep, so the
+            practice loop brings the card back later in the same session — the
+            10-minute relearning step SM-2 descendants use.
         max_interval: Hard cap on the derived interval.
         ease_start: Ease factor for a word with no history yet.
         ease_bonus: Ease gained per successful rep.
         ease_penalty: Ease lost per failed rep.
         ease_min / ease_max: Bounds on the ease factor.
-        lapse_p0: Recall ceiling assigned right after a failure. Below
-            ``reference_threshold`` on purpose, so a just-failed card inverts to
-            "due now" and the practice loop re-queues it in the same session.
-        p0_base: Recall ceiling after one successful rep.
-        p0_streak_bonus: Ceiling gained per additional consecutive success.
-        p0_max: Upper bound on the recall ceiling.
     """
 
     reference_threshold: float = 0.8
-    decay: float = 0.5
     first_interval: float = 86_400.0     # 1 day
     relearn_interval: float = 600.0      # 10 minutes
     max_interval: float = 63_072_000.0   # 2 years
@@ -116,10 +111,6 @@ class HeuristicConfig:
     ease_penalty: float = 0.2
     ease_min: float = 1.3
     ease_max: float = 3.0
-    lapse_p0: float = 0.7
-    p0_base: float = 0.9
-    p0_streak_bonus: float = 0.01
-    p0_max: float = 0.98
 
 
 @dataclass

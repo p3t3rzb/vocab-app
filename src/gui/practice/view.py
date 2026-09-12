@@ -384,11 +384,7 @@ class PracticeScreen(BaseScreen):
         card: Card,
         practiced_at: int,
         next_ts: int | None,
-        curves: tuple[
-            tuple[float, float, float] | None,
-            tuple[float, float, float] | None,
-            tuple[float, float, float] | None,
-        ],
+        curves: tuple[float | None, float | None, float | None],
     ) -> None:
         """Answer worker finished — show result and maybe re-queue the card."""
         self._answered_count += 1
@@ -399,7 +395,7 @@ class PracticeScreen(BaseScreen):
             # The session ran past midnight — start the day tally over.
             self._today_start = answer_day
             self._today_count = 1
-        # This word's stored curve params just changed — the word list's cached
+        # This word's stored half-lives just changed — the word list's cached
         # due times are now stale.
         self._app.invalidate_due_cache()
 
@@ -422,7 +418,6 @@ class PracticeScreen(BaseScreen):
                 current=current,
                 success=success,
                 failure=failure,
-                new_card_recall=card.new_card_recall,
             )
             now = int(time.time())
             horizon = self._horizon()

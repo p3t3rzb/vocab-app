@@ -1,6 +1,6 @@
 """Batched final-timestep forward, shared by the inference paths.
 
-Both the param scheduler (every word's stored curve) and the expected-gain
+Both the param scheduler (every word's stored half-life) and the expected-gain
 scoring need the same thing: run a pile of variable-length histories through the
 model and read off each one's *final* timestep. The read-off is indexed by each
 sequence's own length, so padded steps never leak into the result.
@@ -17,19 +17,16 @@ from __future__ import annotations
 
 import torch
 
-from ..curve import split_params
+from ..curve import half_life
 from ..lstm import RecallLSTM
 
-#: A forgetting curve's ``(p0, S, d)``.
-Params = tuple[float, float, float]
 
-
-def final_step_params(
+def final_step_half_lives(
     model: RecallLSTM,
     sequences: list[list[list[float]]],
     chunk_size: int | None = None,
-) -> list[Params]:
-    """Forward every sequence and return its final timestep's ``(p0, S, d)``.
+) -> list[float]:
+    """Forward every sequence and return its final timestep's half-life.
 
     Args:
         model: Trained network, already on its device and in ``eval`` mode.
@@ -39,7 +36,7 @@ def final_step_params(
             batch — only safe when the caller has already chunked.
 
     Returns:
-        One ``(p0, S, d)`` per input sequence, in the caller's original order.
+        One half-life in seconds per input sequence, in the caller's original order.
     """
     if not sequences:
         return []
@@ -47,7 +44,7 @@ def final_step_params(
     device = next(model.parameters()).device
     step = chunk_size or len(sequences)
     n_features = len(sequences[0][0])
-    out: list[Params | None] = [None] * len(sequences)
+    out: list[float | None] = [None] * len(sequences)
 
     # Length buckets: neighbours in this order pad to nearly the same length.
     order = sorted(range(len(sequences)), key=lambda i: len(sequences[i]))
@@ -65,12 +62,12 @@ def final_step_params(
             )
 
         with torch.inference_mode():
-            raw = model(batch)  # (B, max_len, 3)
+            raw = model(batch)  # (B, max_len, 1)
 
         idx = torch.tensor([n - 1 for n in lengths], device=device)
-        raw_last = raw[torch.arange(len(picks), device=device), idx]  # (B, 3)
-        p0, s, d = split_params(raw_last)  # each (B,)
+        raw_last = raw[torch.arange(len(picks), device=device), idx]  # (B, 1)
+        h = half_life(raw_last)  # (B,)
         for pos, i in enumerate(picks):
-            out[i] = (p0[pos].item(), s[pos].item(), d[pos].item())
+            out[i] = h[pos].item()
 
     return out  # type: ignore[return-value]

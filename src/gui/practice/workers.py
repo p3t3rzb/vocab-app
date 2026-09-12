@@ -39,7 +39,7 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
     gets real due times from its very first answer, which is what eventually
     produces the history a model can be trained on.
 
-    In the untrained case the stored params are reconciled with the heuristic
+    In the untrained case the stored half-lives are reconciled with the heuristic
     first (see :mod:`src.gui.model_sync`), so history recorded while the pair
     had no estimator — or scheduled by a checkpoint that has since been
     deleted — enters the queue correctly scored instead of sitting in the
@@ -73,7 +73,7 @@ def answer_worker(
     predictor: RecallEstimator | None,
     out_queue: queue_module.Queue,
 ) -> None:
-    """Record one repetition, store its recomputed curves, and derive the due time.
+    """Record one repetition, store its recomputed half-lives, and derive the due time.
 
     Recomputes all three of the direction's curves from the history including the
     answer just given — the current one plus the two a further review would
@@ -82,17 +82,17 @@ def answer_worker(
 
     Returns ``("answered", card, practiced_at, next_ts, curves)`` where ``next_ts``
     is the live next-review timestamp (``None`` if no estimator) and ``curves`` is
-    the ``(current, success, failure)`` triple just stored, each ``None`` if they
-    could not be computed. Scoring is left to the caller, which owns the moment the
+    the ``(current, success, failure)`` half-life triple just stored, each ``None``
+    if they could not be computed. Scoring is left to the caller, which owns the moment the
     card is actually served — a gain depends on that moment, so computing one here
     would only date it to the answer instead.
     """
     try:
         practiced_at = int(time.time())
         next_ts: int | None = None
-        current: tuple[float, float, float] | None = None
-        success: tuple[float, float, float] | None = None
-        failure: tuple[float, float, float] | None = None
+        current: float | None = None
+        success: float | None = None
+        failure: float | None = None
 
         with get_session() as session:
             reps_repo = RepetitionRepository(session)
@@ -110,17 +110,16 @@ def answer_worker(
                 all_reps = reps_repo.get_for_word(card.word_id, card.direction)
                 cfg = predictor.config
                 try:
-                    current = predictor.curve_params(all_reps, card.direction)
-                    success, failure = predictor.post_rep_params(
+                    current = predictor.half_life(all_reps, card.direction)
+                    success, failure = predictor.post_rep_half_lives(
                         [(all_reps, card.direction)], practiced_at
                     )[0]
-                    p0, s, d = current
                     delta = invert_curve(
-                        p0, s, d, cfg.recall_threshold, cfg.max_delta_seconds
+                        current, cfg.recall_threshold, cfg.max_delta_seconds
                     )
                     next_ts = practiced_at + int(delta)
                 except Exception:
-                    # Leave the curves NULL so the next param pass recomputes
+                    # Leave the half-lives NULL so the next param pass recomputes
                     # them; the caller sorts an unscoreable card to the back.
                     current = success = failure = None
                     next_ts = 0
@@ -128,13 +127,10 @@ def answer_worker(
                 word = WordRepository(session).get_by_id(card.word_id)
                 if word is not None:
                     prefix = "fwd" if card.direction is Direction.FORWARD else "rev"
-                    for suffix, trio in zip(
+                    for suffix, h in zip(
                         ("", "_ok", "_no"), (current, success, failure)
                     ):
-                        cp0, cs, cd = trio if trio is not None else (None, None, None)
-                        setattr(word, f"{prefix}{suffix}_p0", cp0)
-                        setattr(word, f"{prefix}{suffix}_s", cs)
-                        setattr(word, f"{prefix}{suffix}_d", cd)
+                        setattr(word, f"{prefix}{suffix}_h", h)
 
         out_queue.put(
             ("answered", card, practiced_at, next_ts, (current, success, failure))

@@ -3,7 +3,7 @@
 The view holds a :class:`SettingsForm` (inputs + validation). On Save it just
 persists the settings, applies the appearance mode, and invalidates the word
 list's due-time cache — the recall threshold / max interval are applied *live*
-from the stored curve params, so no model recompute is needed.
+from the stored half-lives, so no model recompute is needed.
 """
 from __future__ import annotations
 

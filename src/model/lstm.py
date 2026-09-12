@@ -1,22 +1,24 @@
 """The :class:`RecallLSTM` network definition.
 
 A small 2-layer LSTM that predicts, at each step in a repetition sequence, the
-*parameters of a forgetting curve* ``R(Δt) = p0·(1 + Δt/S)**(−d)`` (see
+*half-life of a forgetting curve* ``R(Δt) = 2**(−Δt/H)`` (see
 :mod:`src.model.curve`) rather than ``P(remembered)`` directly. Recall
 probability is obtained by evaluating that curve at the queried gap, and the
 next-review time is found by inverting the curve analytically.
 
 Because the curve must be a clean, invertible function of the gap, the network
 is fed the repetition *history only* — never the gap being queried — so its
-three raw outputs depend on past events alone.
+raw output depends on past events alone.
 """
 
 import torch
 import torch.nn as nn
 
+from .curve import LOG2_HALF_LIFE_INIT
+
 
 class RecallLSTM(nn.Module):
-    """Predicts forgetting-curve parameters at each step in a repetition sequence.
+    """Predicts a forgetting-curve half-life at each step in a repetition sequence.
 
     Input per timestep is ``[log(Δt_prev + 1), prev_remembered,
     prev_not_remembered, is_forward, is_reverse]``: the log-time elapsed before
@@ -24,8 +26,9 @@ class RecallLSTM(nn.Module):
     successful (the history-only, gap-shifted input), and a one-hot encoding of
     the practice direction. Direction is constant across the sequence but
     supplied at every step so the LSTM can condition its dynamics on it without
-    relying on the initial state surviving long histories. The output is three
-    raw channels per step, turned into ``(p0, S, d)`` by :mod:`src.model.curve`.
+    relying on the initial state surviving long histories. The output is one raw
+    channel per step — ``log2(H)``, turned into the half-life itself by
+    :mod:`src.model.curve` — biased at init to a three-day half-life.
     """
 
     def __init__(
@@ -60,7 +63,10 @@ class RecallLSTM(nn.Module):
             batch_first=True,
         )
         self.drop = nn.Dropout(dropout)
-        self.head = nn.Linear(hidden_size, 3)
+        self.head = nn.Linear(hidden_size, 1)
+        # The head emits log2(half-life in seconds); start it at three days so the
+        # first forward already predicts on the scale real gaps have.
+        nn.init.constant_(self.head.bias, LOG2_HALF_LIFE_INIT)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass.
@@ -69,7 +75,7 @@ class RecallLSTM(nn.Module):
             x: Padded history inputs of shape ``(B, L, input_size)``.
 
         Returns:
-            Raw curve parameters of shape ``(B, L, 3)``. The activations and the
+            Raw curve parameter of shape ``(B, L, 1)``. The activation and the
             curve evaluation live in :func:`src.model.curve.curve_recall`;
             values at padded positions are undefined and must be masked by the
             caller using the per-sequence lengths.

@@ -35,7 +35,7 @@ class AppSettings:
         """Build a :class:`PredictConfig` with this settings' threshold/cap.
 
         Used wherever recall and due times are derived *live* from the stored
-        curve params (the practice queue, the word list's due-time cache, and the
+        half-lives (the practice queue, the word list's due-time cache, and the
         :mod:`src.predict` CLI) so the user's threshold/cap are honoured.
         """
         return PredictConfig(

@@ -41,11 +41,10 @@ class Database:
         Calling it again with a different URL replaces the active engine; the
         previous engine is disposed.
 
-        Also performs an idempotent migration: the six per-direction
-        forgetting-curve columns (``fwd_p0``/``fwd_s``/``fwd_d`` and their
-        ``rev_*`` counterparts) are added via ``ALTER TABLE`` on databases that
-        pre-date them, and the obsolete ``next_rep_fwd_at`` / ``next_rep_rev_at``
-        timestamp columns are dropped.
+        Also performs an idempotent migration: the per-direction half-life
+        columns (``fwd_h`` / ``rev_h`` and their ``_ok`` / ``_no`` variants) are
+        added via ``ALTER TABLE`` on databases that pre-date them, and the
+        obsolete due-timestamp and three-parameter curve columns are dropped.
 
         Args:
             database_url: SQLAlchemy URL such as
@@ -98,31 +97,39 @@ class Database:
 
     @staticmethod
     def _run_migrations(engine: Engine) -> None:
-        """Migrate pre-existing databases to the per-direction curve-param columns.
+        """Migrate pre-existing databases to the per-direction half-life columns.
 
-        Adds the six current-curve ``fwd_*`` / ``rev_*`` REAL columns and the
-        twelve post-review ``*_ok_*`` / ``*_no_*`` ones if missing, and drops the
-        obsolete due-timestamp columns (``next_repetition_at`` and the
-        per-direction ``next_rep_fwd_at`` / ``next_rep_rev_at``). ``DROP COLUMN``
-        requires SQLite ≥ 3.35, bundled with Python 3.13.
+        Adds the six ``fwd_h`` / ``rev_h`` REAL columns (current curve plus the
+        ``_ok`` / ``_no`` post-review ones) if missing, and drops the columns they
+        replace: the obsolete due timestamps (``next_repetition_at`` and the
+        per-direction ``next_rep_fwd_at`` / ``next_rep_rev_at``) and the eighteen
+        ``p0`` / ``s`` / ``d`` columns of the earlier three-parameter curve.
+        ``DROP COLUMN`` requires SQLite ≥ 3.35, bundled with Python 3.13.
 
         The new columns arrive NULL; the practice queue shows such cards first so
-        they get rescored, and one param pass fills them in.
+        they get rescored, and one param pass fills them in. The old params are
+        not converted — they parameterise a different curve family, and a model
+        retrain rewrites every one of them anyway.
         """
         with engine.connect() as conn:
             cols = [row[1] for row in conn.execute(text("PRAGMA table_info(words)"))]
             changed = False
-            curve_cols = [
+            half_life_cols = [
+                f"{direction}{outcome}_h"
+                for direction in ("fwd", "rev")
+                for outcome in ("", "_ok", "_no")
+            ]
+            for col_name in half_life_cols:
+                if col_name not in cols:
+                    conn.execute(text(f"ALTER TABLE words ADD COLUMN {col_name} REAL"))
+                    changed = True
+            obsolete = ["next_repetition_at", "next_rep_fwd_at", "next_rep_rev_at"] + [
                 f"{direction}{outcome}_{param}"
                 for direction in ("fwd", "rev")
                 for outcome in ("", "_ok", "_no")
                 for param in ("p0", "s", "d")
             ]
-            for col_name in curve_cols:
-                if col_name not in cols:
-                    conn.execute(text(f"ALTER TABLE words ADD COLUMN {col_name} REAL"))
-                    changed = True
-            for col_name in ("next_repetition_at", "next_rep_fwd_at", "next_rep_rev_at"):
+            for col_name in obsolete:
                 if col_name in cols:
                     conn.execute(text(f"ALTER TABLE words DROP COLUMN {col_name}"))
                     changed = True

@@ -7,8 +7,8 @@ from .scheduler import (
     compute_all_params,
 )
 
-#: Either estimator — both emit the same ``(p0, S, d)`` curve params, so callers
-#: that just read params can hold one without caring which produced it.
+#: Either estimator — both emit the same curve half-life, so callers that just
+#: read it can hold one without caring which produced it.
 RecallEstimator = Predictor | HeuristicPredictor
 
 __all__ = [

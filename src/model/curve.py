@@ -1,112 +1,130 @@
 """Forgetting-curve math for the :class:`~src.model.lstm.RecallLSTM` head.
 
-The network predicts, per timestep, the *parameters* of a forgetting curve
+The network predicts, per timestep, the *parameter* of a forgetting curve
 ``R(Δt)`` rather than ``P(remembered)`` directly. This module turns the
-network's raw 3-channel output into a recall probability at a given gap, and
-inverts the curve to find the next-review time analytically (no bisection).
+network's raw single-channel output into a recall probability at a given gap,
+and inverts the curve to find the next-review time analytically (no bisection).
 
-The curve is a **scaled power-law**::
+The curve is a plain **exponential decay**::
 
-    R(Δt) = p0 · (1 + Δt / S) ** (−d)
+    R(Δt) = 2 ** (−Δt / H)
 
-where the three parameters are derived from the head's raw outputs:
+with a single parameter derived from the head's raw output:
 
-* ``p0 = sigmoid(raw0)``        — recall ceiling at ``Δt = 0`` (in ``(0, 1)``)
-* ``S  = softplus(raw1) + eps`` — time-scale, in seconds
-* ``d  = softplus(raw2) + eps`` — decay exponent
+* ``H = 2 ** raw`` — the **half-life**, in seconds: the gap at which recall has
+  fallen to one half.
 
-``R`` starts below 1 (matching the observation that recall right after a rep is
-not certain) and decays monotonically toward 0.
+The head emits the half-life's **base-2 logarithm**, not the half-life itself.
+Half-lives span minutes to years — five orders of magnitude — and a linear head
+would have to emit ``10**6`` to schedule a word a fortnight out, which a linear
+layer over a bounded hidden state does not reach. In log space the same
+fortnight is ``raw = 20.1``, and one unit of raw output is one doubling of the
+interval, so the head's natural output range covers the whole schedule.
+
+``R`` starts at 1 and decays monotonically toward 0, so a word's whole
+forgetting behaviour — how hard it is, how well it is known — is carried by how
+long its half-life is. There is no separate recall ceiling: recall in the
+instant after a review is taken to be certain, and everything the model has to
+say is said through ``H``.
 """
 from __future__ import annotations
 
 import math
 
 import torch
-import torch.nn.functional as F
 
-# Floor added to the strictly-positive params so they never collapse to 0.
+# Probabilities are held this far away from 0 and 1 so a downstream ``log`` is safe.
 PARAM_EPS = 1e-6
 
+# Bounds on the raw ``log2(H)`` output, i.e. a half-life in [~1 µs, ~6e11 years].
+# They exist only to keep ``2 ** raw`` finite and strictly positive; both ends are
+# far outside any schedule, so the clamp never shapes a real prediction.
+LOG2_HALF_LIFE_MIN = -20.0
+LOG2_HALF_LIFE_MAX = 64.0
 
-def split_params(raw_params: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Map a raw ``(..., 3)`` head output to ``(p0, S, d)`` in their valid ranges.
+# Starting half-life for an untrained head, as ``log2(seconds)``: three days. The
+# head's bias is initialised here so the first forward pass already lands in the
+# range real gaps live in, where the curve has a usable gradient.
+LOG2_HALF_LIFE_INIT = math.log2(3 * 86_400.0)
+
+# ``2 ** (−Δt/H) = exp(−ln2·Δt/H)`` — the conversion factor between the two forms,
+# needed whenever the curve is integrated.
+_LN2 = math.log(2.0)
+
+
+def half_life(raw_params: torch.Tensor) -> torch.Tensor:
+    """Map a raw ``(..., 1)`` head output to a positive half-life in seconds.
+
+    The raw output *is* ``log2(H)``, so this is an exponential, clamped at both
+    ends only to keep the result finite and non-zero.
 
     Args:
-        raw_params: The network's unactivated output, last dim of size 3.
+        raw_params: The network's unactivated output, last dim of size 1.
 
     Returns:
-        ``(p0, S, d)``, each shaped like ``raw_params[..., 0]``.
+        ``H`` in seconds, shaped like ``raw_params[..., 0]``.
     """
-    p0 = torch.sigmoid(raw_params[..., 0])
-    s = F.softplus(raw_params[..., 1]) + PARAM_EPS
-    d = F.softplus(raw_params[..., 2]) + PARAM_EPS
-    return p0, s, d
+    log2_h = raw_params[..., 0].clamp(LOG2_HALF_LIFE_MIN, LOG2_HALF_LIFE_MAX)
+    return torch.exp2(log2_h)
 
 
 def curve_recall(
     deltas: torch.Tensor, raw_params: torch.Tensor, eps: float = 1e-6
 ) -> torch.Tensor:
-    """Evaluate ``R(Δt) = p0·(1 + Δt/S)**(−d)`` and clamp for safe BCE.
+    """Evaluate ``R(Δt) = 2**(−Δt/H)`` and clamp for safe BCE.
 
     Args:
         deltas: Query gaps in seconds, shape ``(B, L)`` (must be ``≥ 0``).
-        raw_params: Raw head output, shape ``(B, L, 3)``.
+        raw_params: Raw head output, shape ``(B, L, 1)``.
         eps: Probabilities are clamped to ``[eps, 1 − eps]`` so the downstream
             ``log`` in BCE never sees 0 or 1.
 
     Returns:
         Recall probabilities of shape ``(B, L)``.
     """
-    p0, s, d = split_params(raw_params)
-    recall = p0 * torch.pow(1.0 + deltas / s, -d)
-    return recall.clamp(eps, 1.0 - eps)
+    h = half_life(raw_params)
+    return torch.exp2(-deltas / h).clamp(eps, 1.0 - eps)
 
 
-def recall_at(p0: float, s: float, d: float, delta_seconds: float) -> float:
-    """Evaluate the recall curve ``R(Δt) = p0·(1 + Δt/S)**(−d)`` on Python floats.
+def recall_at(h: float, delta_seconds: float) -> float:
+    """Evaluate the recall curve ``R(Δt) = 2**(−Δt/H)`` on Python floats.
 
     The pure-``math`` counterpart of :func:`curve_recall`, for live recall scoring
-    from stored params (no tensor / no model forward). ``Δt`` is clamped to ``≥ 0``
-    and the result to ``(0, 1)``.
+    from the stored half-life (no tensor / no model forward). ``Δt`` is clamped to
+    ``≥ 0`` and the result to ``(0, 1)``.
     """
     delta = max(0.0, delta_seconds)
-    try:
-        recall = p0 * math.pow(1.0 + delta / s, -d)
-    except (OverflowError, ValueError):
-        return PARAM_EPS
+    recall = 2.0 ** (-delta / h)
     return min(max(recall, PARAM_EPS), 1.0 - PARAM_EPS)
 
 
 def invert_curve(
-    p0: float,
-    s: float,
-    d: float,
+    h: float,
     threshold: float,
     max_delta_seconds: float = 63_072_000.0,
 ) -> float:
-    """Seconds until ``R(Δt)`` falls to ``threshold``, from stored Python floats.
+    """Seconds until ``R(Δt)`` falls to ``threshold``, from the stored half-life.
 
-    Solving ``threshold = p0·(1 + Δt/S)**(−d)`` for ``Δt`` gives
-    ``Δt = S·((p0 / threshold)**(1/d) − 1)``. If ``p0 ≤ threshold`` the word is
-    already below the threshold the instant after review, so it is due now.
+    Solving ``threshold = 2**(−Δt/H)`` for ``Δt`` gives ``Δt = H·log2(1/threshold)``
+    — the interval is simply the half-life scaled by a constant the threshold
+    picks, so raising the threshold shortens every word's interval by the same
+    factor.
 
     Args:
-        p0, s, d: Forgetting-curve params (already activated, ``s``/``d`` > 0).
-        threshold: Recall level below which the word is considered due.
+        h: The curve's half-life in seconds (already activated, ``> 0``).
+        threshold: Recall level below which the word is considered due. A
+            ``threshold ≥ 1`` is unreachable — recall is below it the instant
+            after a review — so the word is due now.
         max_delta_seconds: Hard cap on the returned interval (default 2 years).
-            A small decay ``d`` makes the closed form explode, so it is clamped.
 
     Returns:
         Seconds until the next review, in ``[0, max_delta_seconds]``.
     """
-    if p0 <= threshold:
+    if threshold >= 1.0:
         return 0.0
-    try:
-        delta = s * (math.pow(p0 / threshold, 1.0 / d) - 1.0)
-    except OverflowError:
+    if threshold <= 0.0:
         return max_delta_seconds
-    return min(delta, max_delta_seconds)
+    return min(h * math.log2(1.0 / threshold), max_delta_seconds)
 
 
 def next_delta(
@@ -114,29 +132,24 @@ def next_delta(
     threshold: float,
     max_delta_seconds: float = 63_072_000.0,
 ) -> float:
-    """Analytically invert the curve from a raw ``(3,)`` head output.
+    """Analytically invert the curve from a raw ``(1,)`` head output.
 
-    Thin wrapper over :func:`invert_curve` that first activates the raw params
-    via :func:`split_params`.
+    Thin wrapper over :func:`invert_curve` that first activates the raw param
+    via :func:`half_life`.
 
     Args:
-        raw_params_last: Raw head output for a single timestep, shape ``(3,)``.
+        raw_params_last: Raw head output for a single timestep, shape ``(1,)``.
         threshold: Recall level below which the word is considered due.
         max_delta_seconds: Hard cap on the returned interval (default 2 years).
 
     Returns:
         Seconds until the next review, in ``[0, max_delta_seconds]``.
     """
-    p0_t, s_t, d_t = split_params(raw_params_last)
-    return invert_curve(
-        float(p0_t), float(s_t), float(d_t), threshold, max_delta_seconds
-    )
+    return invert_curve(float(half_life(raw_params_last)), threshold, max_delta_seconds)
 
 
 def retained_seconds(
-    p0: float,
-    s: float,
-    d: float,
+    h: float,
     horizon_seconds: float,
     offset_seconds: float = 0.0,
 ) -> float:
@@ -156,16 +169,14 @@ def retained_seconds(
     review would produce are anchored at the review itself, so they keep the
     default offset of 0.
 
-    Integrating the power law gives, for ``d ≠ 1``::
+    Integrating the exponential gives::
 
-        ∫ p0·(1 + t/S)**(−d) dt = p0·S/(1 − d)·(1 + t/S)**(1 − d)
+        ∫ 2**(−t/H) dt = −H/ln2 · 2**(−t/H)
 
-    and ``p0·S·ln(1 + t/S)`` at ``d = 1``, where that exponent vanishes; the area
-    is that antiderivative's value at the end of the window minus its value at the
-    start.
+    so the area is ``H/ln2 · (2**(−start/H) − 2**(−end/H))``.
 
     Args:
-        p0, s, d: Forgetting-curve params (already activated, ``s``/``d`` > 0).
+        h: The curve's half-life in seconds (already activated, ``> 0``).
         horizon_seconds: Width of the window. Clamped to ``≥ 0``.
         offset_seconds: ``Δt`` the window starts at. Clamped to ``≥ 0``.
 
@@ -174,29 +185,14 @@ def retained_seconds(
     """
     start = max(0.0, offset_seconds)
     end = start + max(0.0, horizon_seconds)
-    try:
-        if abs(d - 1.0) < PARAM_EPS:
-            area = p0 * s * (math.log1p(end / s) - math.log1p(start / s))
-        else:
-            exponent = 1.0 - d
-            area = (
-                p0
-                * s
-                / exponent
-                * (
-                    math.pow(1.0 + end / s, exponent)
-                    - math.pow(1.0 + start / s, exponent)
-                )
-            )
-    except (OverflowError, ValueError, ZeroDivisionError):
-        return 0.0
+    area = h / _LN2 * (2.0 ** (-start / h) - 2.0 ** (-end / h))
     return min(max(area, 0.0), end - start)
 
 
 def expected_retained(
     recall_now: float,
-    success: tuple[float, float, float],
-    failure: tuple[float, float, float],
+    success: float,
+    failure: float,
     horizon_seconds: float,
 ) -> float:
     """Expected recallable seconds a card *would have* after practising it now.
@@ -221,25 +217,25 @@ def expected_retained(
         recall_now: Current ``R(Δt)`` for the card, in ``(0, 1)``. For a word
             never practised in this direction there is no curve to evaluate, so
             the deck's empirical first-attempt success rate stands in for it.
-        success: ``(p0, S, d)`` of the curve fitted after a successful rep.
-        failure: ``(p0, S, d)`` of the curve fitted after a failed rep.
+        success: Half-life of the curve fitted after a successful rep.
+        failure: Half-life of the curve fitted after a failed rep.
         horizon_seconds: Horizon for both integrals.
 
     Returns:
         Expected recallable seconds, in ``[0, horizon_seconds]``.
     """
     return (
-        recall_now * retained_seconds(*success, horizon_seconds)
-        + (1.0 - recall_now) * retained_seconds(*failure, horizon_seconds)
+        recall_now * retained_seconds(success, horizon_seconds)
+        + (1.0 - recall_now) * retained_seconds(failure, horizon_seconds)
     )
 
 
 def expected_gain(
     recall_now: float,
-    current: tuple[float, float, float] | None,
+    current: float | None,
     elapsed_seconds: float,
-    success: tuple[float, float, float],
-    failure: tuple[float, float, float],
+    success: float,
+    failure: float,
     horizon_seconds: float,
 ) -> float:
     """Expected recallable seconds practising a card *right now* would **add**.
@@ -278,14 +274,14 @@ def expected_gain(
         recall_now: Current ``R(Δt)`` for the card, in ``(0, 1)`` — also the
             probability the answer is right. For a word never practised in this
             direction, the deck's first-attempt success rate stands in.
-        current: ``(p0, S, d)`` of the card's present curve, or ``None`` when the
-            card has never been practised in this direction. A never-practised
-            card retains nothing, so its baseline is 0 and its gain is the whole
+        current: Half-life of the card's present curve, or ``None`` when the card
+            has never been practised in this direction. A never-practised card
+            retains nothing, so its baseline is 0 and its gain is the whole
             post-review area.
         elapsed_seconds: Seconds since the card's last review, i.e. the ``Δt`` the
             baseline integral starts at. Ignored when ``current`` is ``None``.
-        success: ``(p0, S, d)`` of the curve fitted after a successful rep.
-        failure: ``(p0, S, d)`` of the curve fitted after a failed rep.
+        success: Half-life of the curve fitted after a successful rep.
+        failure: Half-life of the curve fitted after a failed rep.
         horizon_seconds: Horizon for every integral.
 
     Returns:
@@ -294,4 +290,4 @@ def expected_gain(
     after = expected_retained(recall_now, success, failure, horizon_seconds)
     if current is None:
         return after
-    return after - retained_seconds(*current, horizon_seconds, elapsed_seconds)
+    return after - retained_seconds(current, horizon_seconds, elapsed_seconds)

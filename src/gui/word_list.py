@@ -32,19 +32,17 @@ def _due_sort_key(ts: int | None) -> tuple[bool, int]:
 
 
 def _due_ts(
-    p0: float | None,
-    s: float | None,
-    d: float | None,
+    h: float | None,
     last: int | None,
     cfg: PredictConfig,
 ) -> int | None:
-    """Live next-review timestamp from stored curve params, or ``None`` if unknown.
+    """Live next-review timestamp from the stored half-life, or ``None`` if unknown.
 
-    ``None`` when the direction has no params (not yet computed) or no history.
+    ``None`` when the direction has no half-life (not yet computed) or no history.
     """
-    if p0 is None or s is None or d is None or last is None:
+    if h is None or last is None:
         return None
-    return last + int(invert_curve(p0, s, d, cfg.recall_threshold, cfg.max_delta_seconds))
+    return last + int(invert_curve(h, cfg.recall_threshold, cfg.max_delta_seconds))
 
 
 def _build_due_cache(
@@ -52,12 +50,12 @@ def _build_due_cache(
     last_by_dir: dict[tuple[int, int], int],
     cfg: PredictConfig,
 ) -> dict[int, tuple[int | None, int | None]]:
-    """Compute every word's (fwd_due_ts, rev_due_ts) from stored params, once."""
+    """Compute every word's (fwd_due_ts, rev_due_ts) from stored half-lives, once."""
     fwd, rev = int(Direction.FORWARD), int(Direction.REVERSE)
     return {
         w.id: (
-            _due_ts(w.fwd_p0, w.fwd_s, w.fwd_d, last_by_dir.get((w.id, fwd)), cfg),
-            _due_ts(w.rev_p0, w.rev_s, w.rev_d, last_by_dir.get((w.id, rev)), cfg),
+            _due_ts(w.fwd_h, last_by_dir.get((w.id, fwd)), cfg),
+            _due_ts(w.rev_h, last_by_dir.get((w.id, rev)), cfg),
         )
         for w in words
     }
@@ -204,9 +202,9 @@ class WordListScreen(BaseScreen):
     def _load_words(self) -> None:
         """Load every word from the database and re-render the treeview.
 
-        The per-direction due timestamps are derived from stored curve params and
+        The per-direction due timestamps are derived from stored half-lives and
         cached on the :class:`App`, so they're computed once per database (and
-        after params/threshold change) rather than on every visit.
+        after half-lives/threshold change) rather than on every visit.
         """
         with get_session() as session:
             self._all_words = WordRepository(session).get_all()

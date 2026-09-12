@@ -228,7 +228,7 @@ class TrainScreen(BaseScreen):
         self._status_var.set(f"Computing schedules… {done}/{total}")
 
     def _on_schedules_done(self) -> None:
-        # Every word's curve params were just recomputed — drop the cached due
+        # Every word's half-life was just recomputed — drop the cached due
         # times so the word list rebuilds them.
         self._app.invalidate_due_cache()
         self._reset_controls("Done — model trained and params updated.", success=True)
