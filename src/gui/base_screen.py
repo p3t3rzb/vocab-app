@@ -67,6 +67,9 @@ class BaseScreen(ctk.CTkFrame):
     def on_show(self) -> None:
         """Called by :meth:`App._swap` after the frame is packed. No-op by default."""
 
+    def on_rescale(self) -> None:
+        """Called by :meth:`App._rescale` after the UI scale changes. No-op by default."""
+
     def on_destroy(self) -> None:
         """Stop every owned :class:`BackgroundJob`. Subclasses may extend (call ``super()``)."""
         for job in self._owned_jobs:

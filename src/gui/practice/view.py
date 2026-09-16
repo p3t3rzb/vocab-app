@@ -108,6 +108,8 @@ class PracticeScreen(BaseScreen):
         content.grid_rowconfigure(0, weight=1)
         content.grid_rowconfigure(7, weight=1)
         content.grid_columnconfigure(0, weight=1)
+        self._content = content
+        content.bind("<Configure>", lambda _e: self._fit_wraplength(), add="+")
 
         self._direction_var = ctk.StringVar(value="")
         ctk.CTkLabel(
@@ -118,12 +120,13 @@ class PracticeScreen(BaseScreen):
         ).grid(row=1, column=0, pady=(0, 16))
 
         self._prompt_var = ctk.StringVar(value="Loading…")
-        ctk.CTkLabel(
+        self._prompt_label = ctk.CTkLabel(
             content,
             textvariable=self._prompt_var,
             font=ctk.CTkFont(**Fonts.PROMPT),
             wraplength=700,
-        ).grid(row=2, column=0, pady=(0, 12))
+        )
+        self._prompt_label.grid(row=2, column=0, pady=(0, 12))
 
         self._sep_label = ctk.CTkLabel(
             content,
@@ -133,12 +136,13 @@ class PracticeScreen(BaseScreen):
         self._sep_label.grid(row=3, column=0, pady=(8, 8))
 
         self._answer_var = ctk.StringVar(value="")
-        ctk.CTkLabel(
+        self._answer_label = ctk.CTkLabel(
             content,
             textvariable=self._answer_var,
             font=ctk.CTkFont(**Fonts.ANSWER),
             wraplength=700,
-        ).grid(row=4, column=0, pady=(0, 24))
+        )
+        self._answer_label.grid(row=4, column=0, pady=(0, 24))
 
         self._last_var = ctk.StringVar(value="")
         ctk.CTkLabel(
@@ -164,6 +168,22 @@ class PracticeScreen(BaseScreen):
         ).grid(row=2, column=0, sticky="ew", padx=Spacing.SCREEN_PAD_X, pady=(0, 16))
 
         self._set_state(PracticeState.LOADING)
+
+    def on_rescale(self) -> None:
+        """Re-fit the wrap width, which is stored unscaled and so goes stale on a rescale."""
+        self._fit_wraplength()
+
+    def _fit_wraplength(self) -> None:
+        """Wrap the prompt and answer at the content area's current width.
+
+        A fixed wrap width lets long sentences overflow a narrow window.
+        ``wraplength`` is given in unscaled units (customtkinter applies the
+        widget scaling itself), so the pixel width is divided by the scale.
+        """
+        scale = ctk.ScalingTracker.get_widget_scaling(self._content)
+        wraplength = max(1, int(self._content.winfo_width() / scale))
+        self._prompt_label.configure(wraplength=wraplength)
+        self._answer_label.configure(wraplength=wraplength)
 
     # ------------------------------------------------------------------
     # Key handling

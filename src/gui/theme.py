@@ -42,7 +42,16 @@ class WindowSizes:
     """Initial window geometries."""
 
     MAIN = "900x600"
-    MAIN_MIN = (700, 450)
+    # Below this size the whole UI scales down with the window instead of
+    # clipping, bottoming out at ``MIN_UI_SCALE`` (the hard window minimum).
+    # The width leaves headroom over the widest header (~700 px): text renders
+    # up to ~7% wider at small scales, since font sizes round to whole points.
+    MAIN_MIN = (760, 450)
+    MIN_UI_SCALE = 0.4
+    # UI scale is rounded to this step so a drag doesn't redraw on every pixel.
+    UI_SCALE_STEP = 0.05
+    # Wait this long after the last resize event before rescaling.
+    RESCALE_DEBOUNCE_MS = 80
     NEW_DB_DIALOG = "420x260"
     WORD_EDIT_DIALOG = "440x220"
 

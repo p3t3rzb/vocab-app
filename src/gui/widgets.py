@@ -115,12 +115,14 @@ def build_tree(
         selectmode=selectmode,
         style="App.Treeview",
     )
+    scale = ctk.ScalingTracker.widget_scaling
     for col in columns:
         tree.heading(col.key, text=col.heading)
+        width, minwidth = round(col.width * scale), round(col.minwidth * scale)
         if col.anchor is not None:
-            tree.column(col.key, width=col.width, minwidth=col.minwidth, anchor=col.anchor)
+            tree.column(col.key, width=width, minwidth=minwidth, anchor=col.anchor)
         else:
-            tree.column(col.key, width=col.width, minwidth=col.minwidth)
+            tree.column(col.key, width=width, minwidth=minwidth)
 
     scrollbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
     tree.configure(yscrollcommand=scrollbar.set)
@@ -196,6 +198,9 @@ def apply_treeview_style() -> None:
     widgets in both light and dark mode.
     """
     style = ttk.Style()
+    # ttk isn't covered by customtkinter's widget scaling, so apply it by hand.
+    scale = ctk.ScalingTracker.widget_scaling
+    font_size = round(Fonts.SMALL["size"] * scale)
     is_dark = ctk.get_appearance_mode() == "Dark"
     if is_dark:
         bg = Colors.TREE_DARK_BG
@@ -213,16 +218,16 @@ def apply_treeview_style() -> None:
         "App.Treeview",
         background=bg,
         foreground=fg,
-        rowheight=Colors.TREE_ROW_HEIGHT,
+        rowheight=round(Colors.TREE_ROW_HEIGHT * scale),
         fieldbackground=bg,
         borderwidth=0,
-        font=("", Fonts.SMALL["size"]),
+        font=("", font_size),
     )
     style.configure(
         "App.Treeview.Heading",
         background=heading_bg,
         foreground=fg,
-        font=("", Fonts.SMALL["size"], "bold"),
+        font=("", font_size, "bold"),
         borderwidth=1,
         relief="flat",
     )
@@ -231,3 +236,21 @@ def apply_treeview_style() -> None:
         background=[("selected", sel_bg)],
         foreground=[("selected", "#ffffff")],
     )
+
+
+def rescale_tree_columns(root: Any, ratio: float) -> None:
+    """Multiply the column widths of every treeview under ``root`` by ``ratio``.
+
+    Scaling the current widths (rather than resetting them from their
+    :class:`ColumnSpec`) keeps any column the user has resized by hand.
+    """
+    for child in root.winfo_children():
+        if isinstance(child, ttk.Treeview):
+            for key in child["columns"]:
+                col = child.column(key)
+                child.column(
+                    key,
+                    width=round(col["width"] * ratio),
+                    minwidth=round(col["minwidth"] * ratio),
+                )
+        rescale_tree_columns(child, ratio)
