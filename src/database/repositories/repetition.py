@@ -22,19 +22,6 @@ class RepetitionRepository(BaseRepository):
         )
         return list(self._session.scalars(stmt))
 
-    def get_latest_for_word(self, word_id: int, direction: Direction) -> Repetition | None:
-        """Return the most recent repetition for a (word, direction) pair, or ``None``."""
-        stmt = (
-            select(Repetition)
-            .where(
-                Repetition.word_id == word_id,
-                Repetition.direction == int(direction),
-            )
-            .order_by(Repetition.practiced_at.desc())
-            .limit(1)
-        )
-        return self._session.scalars(stmt).first()
-
     def latest_practiced_at_by_word(self) -> dict[int, int]:
         """Map every word_id to its most recent ``practiced_at`` across all directions.
 

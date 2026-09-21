@@ -30,7 +30,6 @@ class WordEditDialog(BaseDialog):
         self._src_lang = src_lang
         self._tgt_lang = tgt_lang
         self._word = word
-        self._saved = False
 
         super().__init__(
             master,
@@ -117,5 +116,4 @@ class WordEditDialog(BaseDialog):
             messagebox.showerror("Save failed", str(exc), parent=self)
             return
 
-        self._saved = True
         self.destroy()

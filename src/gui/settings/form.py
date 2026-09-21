@@ -6,7 +6,7 @@ live threshold label, and the :meth:`read` validator that returns an
 :class:`AppSettings` or ``None`` (after surfacing a warning dialog).
 
 The view never touches Tk variables directly — it only calls
-:meth:`read`, :meth:`set_enabled`, and the :attr:`appearance` property.
+:meth:`read` and the :attr:`appearance` property.
 """
 from __future__ import annotations
 
@@ -208,13 +208,4 @@ class SettingsForm:
             recall_threshold=round(float(self._threshold_var.get()), 4),
             max_delta_seconds=max_delta_seconds,
             appearance_mode=self._appearance_var.get(),
-        )
-
-    def set_enabled(self, enabled: bool) -> None:
-        """Enable or disable all editable widgets in the form."""
-        state = "normal" if enabled else "disabled"
-        self._threshold_slider.configure(state=state)
-        self._no_max_check.configure(state=state)
-        self._max_days_entry.configure(
-            state="normal" if enabled and not self._no_max_var.get() else "disabled"
         )

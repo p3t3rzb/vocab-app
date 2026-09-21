@@ -53,12 +53,11 @@ class ScreenHeader(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.grid_columnconfigure(1, weight=1)
 
-        self.back_button: ctk.CTkButton | None = None
         if on_back is not None:
-            self.back_button = ctk.CTkButton(
+            back_button = ctk.CTkButton(
                 self, text="← Back", width=80, command=on_back
             )
-            self.back_button.grid(row=0, column=0, sticky="w")
+            back_button.grid(row=0, column=0, sticky="w")
 
         self.title_label = ctk.CTkLabel(
             self,

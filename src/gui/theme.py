@@ -33,9 +33,6 @@ class Spacing:
     SCREEN_PAD_Y = (14, 4)
     HEADER_TITLE_PAD = 12
     BODY_PAD_X = 32
-    SECTION_GAP = 20
-    FIELD_GAP = 6
-    BUTTON_GAP = 6
 
 
 class WindowSizes:
@@ -63,11 +60,9 @@ class PollIntervals:
 
 
 class Defaults:
-    """Default values for GUI inputs and the app itself."""
+    """Default values for GUI inputs."""
 
     EPOCHS = 100
-    APPEARANCE_MODE = "system"
-    COLOR_THEME = "blue"
 
 
 class Limits:

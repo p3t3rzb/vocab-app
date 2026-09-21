@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import math
 import tkinter as tk
-from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
