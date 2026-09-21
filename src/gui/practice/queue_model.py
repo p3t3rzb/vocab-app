@@ -16,6 +16,12 @@ in directional pairs — both directions of a word back to back, and words with
 only one direction left new ahead of brand-new pairs — so a word is finished
 rather than half-learned.
 
+Once even those run out the session need not end: :func:`drain_waiting` folds
+the not-yet-due cards into the main queue on the same expected-gain key, so
+practice simply continues with whichever card the next review would help most.
+The threshold, which until then decided *whether* a card is served, drops out;
+the ordering does not change, because it never depended on it.
+
 Ordering on the gain rather than on current recall matters for a second reason:
 worst-recalled-first always reviews weak cards immediately, which locks difficulty
 and gap together and is why the trained model fits almost no decay. Deferring weak
@@ -165,6 +171,45 @@ def card_gain(card: Card, now: int, horizon_seconds: float) -> float:
     return expected_gain(
         recall, card.current, elapsed, card.success, card.failure, horizon_seconds
     )
+
+
+def drain_waiting(
+    queue: PracticeQueue, waiting: PracticeQueue, now: int, horizon_seconds: float
+) -> int:
+    """Move every waiting card into the main queue, re-scored at ``now``.
+
+    What the session does when the user asks to keep practising after the queue
+    has run dry: the cards left in the waiting heap are exactly the learned ones
+    still above the recall threshold, and folding them in on the usual ``−score``
+    key drops that threshold without changing the order anything is served in.
+
+    They are re-scored rather than pushed with the score they were built with,
+    for the same reason promotion re-scores them: a gain moves with the clock.
+
+    Only the cards already waiting are folded in — answering one still parks it
+    by its new due time, so each comes up once and the phase lasts as long as the
+    vocabulary does. Re-queueing an answered card on its gain instead would serve
+    it again almost immediately: a card reviewed a moment ago scores *high*, not
+    low, because the curve a further review would leave is much longer than the
+    one just fitted.
+
+    Args:
+        queue: Main queue to push into.
+        waiting: Waiting queue, emptied by this call.
+        now: Unix timestamp the gains are evaluated at.
+        horizon_seconds: Window the gains are integrated over.
+
+    Returns:
+        How many cards were moved.
+    """
+    moved = 0
+    while True:
+        card = waiting.pop()
+        if card is None:
+            return moved
+        card.score = card_gain(card, now, horizon_seconds)
+        queue.push(card, -card.score)
+        moved += 1
 
 
 def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQueue]:

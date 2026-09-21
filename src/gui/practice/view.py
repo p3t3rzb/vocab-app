@@ -19,7 +19,7 @@ from ..base_screen import BaseScreen
 from ..formatting import day_start, format_future, format_past
 from ..theme import Fonts, Hints, PollIntervals, Spacing
 from ..widgets import build_header
-from .queue_model import ERROR_PRIORITY, Card, PracticeQueue, card_gain
+from .queue_model import ERROR_PRIORITY, Card, PracticeQueue, card_gain, drain_waiting
 from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
 
@@ -227,6 +227,11 @@ class PracticeScreen(BaseScreen):
                 self._submit_answer(remembered=False)
         elif self._state is PracticeState.RESULT:
             self._advance()
+        elif self._state is PracticeState.OFFER_EXTRA:
+            if key is ArrowKey.RIGHT:
+                self._start_extra()
+            elif key is ArrowKey.LEFT:
+                self._go_back()
 
     # ------------------------------------------------------------------
     # State transitions
@@ -263,6 +268,18 @@ class PracticeScreen(BaseScreen):
             self._sep_label.grid()
             self._hint_var.set(Hints.RESULT_BAR)
 
+        elif state is PracticeState.OFFER_EXTRA:
+            self._direction_var.set("")
+            self._prompt_var.set(
+                "Nothing is due and there are no new words left.\n"
+                "Keep practicing words you already know?"
+            )
+            self._sep_label.grid_remove()
+            self._answer_var.set("")
+            self._last_var.set("")
+            self._next_var.set("")
+            self._hint_var.set(Hints.OFFER_EXTRA_BAR)
+
         elif state is PracticeState.DONE:
             self._direction_var.set("")
             self._prompt_var.set("No more words to repeat now.")
@@ -290,7 +307,7 @@ class PracticeScreen(BaseScreen):
         ) else 0
         remaining = len(self._queue) + pending
         parts = [f"Answered {self._answered_count}", f"Today {self._today_count}"]
-        if self._state is not PracticeState.DONE:
+        if self._state not in (PracticeState.DONE, PracticeState.OFFER_EXTRA):
             parts.append(f"Remaining {remaining}")
         self._stats_var.set("  •  ".join(parts))
 
@@ -342,7 +359,13 @@ class PracticeScreen(BaseScreen):
         card = self._queue.pop()
         if card is None:
             self._current = None
-            self._set_state(PracticeState.DONE)
+            # Nothing due and no new words left. Offer the not-due cards rather
+            # than ending the session — unless there are none, or the session has
+            # no estimator to score them with.
+            if len(self._waiting) and self._horizon() is not None:
+                self._set_state(PracticeState.OFFER_EXTRA)
+            else:
+                self._set_state(PracticeState.DONE)
             return
 
         self._current = card
@@ -375,7 +398,31 @@ class PracticeScreen(BaseScreen):
         )
 
     def _advance(self) -> None:
-        """RESULT → PROMPT (or DONE): move to the next card."""
+        """RESULT → PROMPT (or OFFER_EXTRA / DONE): move to the next card."""
+        self._show_current()
+
+    def _start_extra(self) -> None:
+        """OFFER_EXTRA → PROMPT: fold the not-due cards in and carry on.
+
+        Every learned card is now in the one queue, ordered by expected gain
+        exactly as the due ones were — the threshold decided only whether a card
+        was served, never in what order. Answering keeps working as it does in
+        the first phase, so each of them comes up once and is then parked until
+        it is genuinely due again.
+
+        That is deliberately not "re-queue it immediately, the gain ordering will
+        sort it out". It would not: a card answered a moment ago has a large gain,
+        because the curve a *further* review would leave is much longer than the
+        one just fitted, so it would come straight back — measured on the French
+        deck, often as the very next card. The queue holds the whole vocabulary
+        here, so serving each card once is days of practice anyway; when it does
+        empty, the offer is simply made again.
+        """
+        horizon = self._horizon()
+        if horizon is None:  # not reachable: the offer is not made without one
+            self._set_state(PracticeState.DONE)
+            return
+        drain_waiting(self._queue, self._waiting, int(time.time()), horizon)
         self._show_current()
 
     # ------------------------------------------------------------------

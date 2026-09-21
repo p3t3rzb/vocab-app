@@ -1,9 +1,11 @@
 """State machine for the practice screen.
 
 Each card walks through the prompt → answer → saving → result transitions.
-``LOADING`` is the initial state until the queue is built, and ``DONE`` is
-the terminal state once the queue is empty. ``PracticeState`` holds the
-states; ``ArrowKey`` is the set of arrow keys the screen interprets.
+``LOADING`` is the initial state until the queue is built. Once the queue
+empties, ``OFFER_EXTRA`` asks whether to keep practising cards that are not
+due yet, and ``DONE`` is the terminal state when there is nothing left to
+offer. ``PracticeState`` holds the states; ``ArrowKey`` is the set of arrow
+keys the screen interprets.
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ class PracticeState(Enum):
     ANSWER = "answer"
     SAVING = "saving"
     RESULT = "result"
+    OFFER_EXTRA = "offer_extra"
     DONE = "done"
 
 

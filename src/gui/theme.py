@@ -119,6 +119,7 @@ class Hints:
     ANSWER_BAR = "←  didn't remember     →  remembered"
     SAVING_BAR = "Saving…"
     RESULT_BAR = "press any arrow for the next word"
+    OFFER_EXTRA_BAR = "→  keep practicing     ←  back to the word list"
     DONE_BAR = "press ← Back to return to the word list"
 
 
