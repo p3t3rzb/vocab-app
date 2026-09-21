@@ -13,14 +13,16 @@ The practice queue needs all three to rank cards by how much recall a review
 *adds* over leaving the card alone (:func:`src.model.curve.expected_gain`) —
 the current curve is the do-nothing baseline it is measured against. Three
 sequences per card is far too much work to do at session start, so it happens
-here instead. They are
-computed for directions with no history too, since a never-practised card still
-has to be ranked — only the *current* curve stays ``NULL`` there, which is what
-marks a card as new.
+here instead.
+
+A direction with **no history** is skipped entirely and keeps all three columns
+at ``NULL``. Such a card does not compete on gain: the queue trails it behind
+every learned card and orders it by a shuffle, so none of its curves is ever
+read. The ``NULL`` current curve is also what marks the card as new.
 
 Everything derived from these half-lives — recall score, next-review time, queue
 score — is computed *live* (see :mod:`src.model.curve`), so the recall threshold
-and horizon can change without recomputing anything here.
+can change without recomputing anything here.
 """
 from __future__ import annotations
 
@@ -125,11 +127,15 @@ class ParamScheduler:
             for direction in Direction:
                 key = (word.id, int(direction))
                 reps = reps_map.get(key, [])
+                if not reps:
+                    # Never practised: the practice queue orders this card by its
+                    # shuffled place among the new ones, never by a gain, so none
+                    # of its three curves is ever read. All three stay NULL.
+                    continue
                 rows = history_rows(reps, direction)
-                gap = float(now - reps[-1].practiced_at) if reps else 0.0
-                if reps:
-                    slots.append((key, 0))
-                    sequences.append(rows)
+                gap = float(now - reps[-1].practiced_at)
+                slots.append((key, 0))
+                sequences.append(rows)
                 slots.append((key, 1))
                 sequences.append(rows + [rep_row(gap, True, direction)])
                 slots.append((key, 2))
@@ -150,7 +156,8 @@ class ParamScheduler:
 
         def curves(key: tuple[int, int]) -> CardCurves:
             current, ok, no = by_key[key]
-            # `ok` / `no` are always produced above; the cast documents that.
+            # All three are ``None`` for a never-practised direction, which has no
+            # sequences above; the cast documents that the annotation is loose here.
             return current, ok, no  # type: ignore[return-value]
 
         return {
@@ -180,10 +187,9 @@ def _persist_params(
 ) -> None:
     """Write both directions' curve half-lives for a chunk of words in one session.
 
-    A direction with no history has a ``None`` *current* curve, so its
-    ``<dir>_h`` column goes to SQL ``NULL`` — the word list renders "–" and the
-    practice queue treats the card as new. Its two post-review half-lives are
-    still written, because a new card has to be ranked like any other.
+    A direction with no history has all three curves ``None``, so its columns go
+    to SQL ``NULL`` — the word list renders "–" and the practice queue treats the
+    card as new, ordering it by a shuffle rather than by a gain.
     """
     with get_session() as session:
         for word_id, (fwd, rev) in chunk_updates.items():
@@ -206,10 +212,9 @@ def backfill_heuristic_params(
     would sit at ``NULL`` — practised, but unscheduled and rendered "–" in the
     word list — until each was answered once more.
 
-    Every word is touched, not only the ones with history: the post-review curves
-    are what the practice queue ranks on, and a never-practised card needs them
-    too. A direction with no history still gets a ``NULL`` *current* curve, which
-    is what keeps it marked as new.
+    A direction with no history is left at ``NULL`` across all three columns: the
+    practice queue orders a never-practised card by a shuffle, not by a gain, so
+    it never reads them.
 
     Args:
         heuristic_cfg: Override the default :class:`HeuristicConfig`.
@@ -239,7 +244,10 @@ def backfill_heuristic_params(
         per_direction: list[CardCurves] = []
         for direction in Direction:
             reps = reps_map.get((word_id, int(direction)), [])
-            current = predictor.half_life(reps, direction) if reps else None
+            if not reps:
+                per_direction.append((None, None, None))
+                continue
+            current = predictor.half_life(reps, direction)
             ok, no = predictor.post_rep_half_lives([(reps, direction)], now)[0]
             per_direction.append((current, ok, no))
         updates[word_id] = (per_direction[0], per_direction[1])

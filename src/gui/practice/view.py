@@ -315,21 +315,15 @@ class PracticeScreen(BaseScreen):
     # Card flow
     # ------------------------------------------------------------------
 
-    def _horizon(self) -> float | None:
-        """Window a gain is scored over, or ``None`` when there is no estimator.
+    def _has_estimator(self) -> bool:
+        """Whether this session can score a card at all.
 
-        The user's interval cap doubles as the retention horizon. The ordering is
-        close to horizon-independent but not exactly so — unlike a retention
-        *level*, a gain is a difference of two nearly-equal integrals, so the
-        horizon survives in it. On the French deck the served order correlates
-        ρ ≈ 0.98 between a 30-day and a 2-year horizon and ρ > 0.999 between a year
-        and two, reshuffling only near-tied cards; which cards lead a session does
-        not change. So the cap is a reasonable stand-in, but it is a mild tuning
-        knob rather than a pure choice of units.
+        A gain is computed from the card's own stored half-lives
+        (:func:`~src.gui.practice.queue_model.card_gain`), so it needs no config —
+        but a pair with no estimator at all has no half-lives either, and such a
+        session never re-scores or re-queues anything.
         """
-        if self._predictor is None:
-            return None
-        return self._predictor.config.max_delta_seconds
+        return self._predictor is not None
 
     def _promote_due(self) -> None:
         """Move every waiting card whose due time has passed into the main heap.
@@ -337,11 +331,11 @@ class PracticeScreen(BaseScreen):
         The card is re-scored on the way across rather than reusing the score it
         was built with: a gain depends on how long the card has been waiting (see
         :func:`src.model.curve.expected_gain`), and the whole point of parking it
-        was that time would pass. Only a session with no estimator at all has no
-        horizon to score against, and that session never re-queues anything.
+        was that time would pass. Only a session with no estimator at all has
+        nothing to score with, and that session never re-queues anything.
         """
         now = int(time.time())
-        horizon = self._horizon()
+        can_score = self._has_estimator()
         while True:
             due_ts = self._waiting.peek_priority()
             if due_ts is None or due_ts > now:
@@ -349,8 +343,8 @@ class PracticeScreen(BaseScreen):
             card = self._waiting.pop()
             if card is None:
                 continue
-            if horizon is not None:
-                card.score = card_gain(card, now, horizon)
+            if can_score:
+                card.score = card_gain(card, now)
             self._queue.push(card, -card.score)
 
     def _show_current(self) -> None:
@@ -362,7 +356,7 @@ class PracticeScreen(BaseScreen):
             # Nothing due and no new words left. Offer the not-due cards rather
             # than ending the session — unless there are none, or the session has
             # no estimator to score them with.
-            if len(self._waiting) and self._horizon() is not None:
+            if len(self._waiting) and self._has_estimator():
                 self._set_state(PracticeState.OFFER_EXTRA)
             else:
                 self._set_state(PracticeState.DONE)
@@ -418,11 +412,10 @@ class PracticeScreen(BaseScreen):
         here, so serving each card once is days of practice anyway; when it does
         empty, the offer is simply made again.
         """
-        horizon = self._horizon()
-        if horizon is None:  # not reachable: the offer is not made without one
+        if not self._has_estimator():  # not reachable: the offer needs one
             self._set_state(PracticeState.DONE)
             return
-        drain_waiting(self._queue, self._waiting, int(time.time()), horizon)
+        drain_waiting(self._queue, self._waiting, int(time.time()))
         self._show_current()
 
     # ------------------------------------------------------------------
@@ -487,8 +480,7 @@ class PracticeScreen(BaseScreen):
                 failure=failure,
             )
             now = int(time.time())
-            horizon = self._horizon()
-            if success is None or failure is None or horizon is None:
+            if success is None or failure is None or not self._has_estimator():
                 # Nothing to score the card from — send it to the back rather than
                 # the front.
                 self._queue.push(refreshed, ERROR_PRIORITY)
@@ -497,7 +489,7 @@ class PracticeScreen(BaseScreen):
                 # score-sorted position so it returns later in the session. It is
                 # re-scored again if it waits, so this score only has to order it
                 # against the queue as it stands now.
-                refreshed.score = card_gain(refreshed, now, horizon)
+                refreshed.score = card_gain(refreshed, now)
                 self._queue.push(refreshed, -refreshed.score)
             else:
                 # Due in the future — park it in the waiting heap so it can be

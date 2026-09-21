@@ -116,6 +116,8 @@ def invert_curve(
             ``threshold ≥ 1`` is unreachable — recall is below it the instant
             after a review — so the word is due now.
         max_delta_seconds: Hard cap on the returned interval (default 2 years).
+            ``math.inf`` leaves the interval uncapped — the user's "No maximum"
+            setting — in which case it is the half-life alone that bounds it.
 
     Returns:
         Seconds until the next review, in ``[0, max_delta_seconds]``.
@@ -148,52 +150,47 @@ def next_delta(
     return invert_curve(float(half_life(raw_params_last)), threshold, max_delta_seconds)
 
 
-def retained_seconds(
-    h: float,
-    horizon_seconds: float,
-    offset_seconds: float = 0.0,
-) -> float:
-    """Area under ``R(Δt)`` over a window of ``horizon_seconds``, in seconds.
+def retained_seconds(h: float) -> float:
+    """Total area under ``R(Δt)``, in seconds — the whole curve, out to infinity.
 
     ``R`` is the probability that a test at ``Δt`` succeeds, so its integral is the
-    expected amount of time the word stays recallable over the window — the
-    continuous counterpart of :func:`invert_curve`'s "time until recall falls to
-    ``threshold``". Unlike that crossing time, it is finite and strictly positive
-    for *every* curve, which is what lets cards be compared whether or not a
-    single review lifts them over the user's threshold.
+    expected amount of time the word stays recallable — the continuous counterpart
+    of :func:`invert_curve`'s "time until recall falls to ``threshold``". Unlike
+    that crossing time, it is finite and strictly positive for *every* curve, which
+    is what lets cards be compared whether or not a single review lifts them over
+    the user's threshold.
 
-    The window starts at ``offset_seconds``, which is what makes the function
-    usable for a curve that is already part-way through its decay: a card's
-    *current* curve is anchored at its last review, so scoring it over the window
-    starting *now* means integrating from ``now − last_practiced``. The curves a
-    review would produce are anchored at the review itself, so they keep the
-    default offset of 0.
+    Integrating the exponential over the whole half-line collapses to a constant
+    times the half-life::
 
-    Integrating the exponential gives::
+        ∫₀^∞ 2**(−t/H) dt = H/ln2
 
-        ∫ 2**(−t/H) dt = −H/ln2 · 2**(−t/H)
+    so a curve is worth recallable seconds in direct proportion to its half-life,
+    and comparing two curves is comparing two half-lives.
 
-    so the area is ``H/ln2 · (2**(−start/H) − 2**(−end/H))``.
+    A curve already part-way through its decay needs no separate formula. The
+    exponential is memoryless — ``R(s + t) = R(s)·R(t)`` — so the area still ahead
+    of a card last reviewed ``s`` ago is just the total scaled by the recall it has
+    left::
+
+        ∫ₛ^∞ 2**(−t/H) dt = R(s) · H/ln2
+
+    which is why :func:`expected_gain` needs only the card's current recall, not
+    how long it has been sitting.
 
     Args:
         h: The curve's half-life in seconds (already activated, ``> 0``).
-        horizon_seconds: Width of the window. Clamped to ``≥ 0``.
-        offset_seconds: ``Δt`` the window starts at. Clamped to ``≥ 0``.
 
     Returns:
-        Expected recallable seconds, in ``[0, horizon_seconds]``.
+        Expected recallable seconds, ``> 0``.
     """
-    start = max(0.0, offset_seconds)
-    end = start + max(0.0, horizon_seconds)
-    area = h / _LN2 * (2.0 ** (-start / h) - 2.0 ** (-end / h))
-    return min(max(area, 0.0), end - start)
+    return h / _LN2
 
 
 def expected_retained(
     recall_now: float,
     success: float,
     failure: float,
-    horizon_seconds: float,
 ) -> float:
     """Expected recallable seconds a card *would have* after practising it now.
 
@@ -219,37 +216,37 @@ def expected_retained(
             the deck's empirical first-attempt success rate stands in for it.
         success: Half-life of the curve fitted after a successful rep.
         failure: Half-life of the curve fitted after a failed rep.
-        horizon_seconds: Horizon for both integrals.
 
     Returns:
-        Expected recallable seconds, in ``[0, horizon_seconds]``.
+        Expected recallable seconds, ``> 0``.
     """
     return (
-        recall_now * retained_seconds(success, horizon_seconds)
-        + (1.0 - recall_now) * retained_seconds(failure, horizon_seconds)
+        recall_now * retained_seconds(success)
+        + (1.0 - recall_now) * retained_seconds(failure)
     )
 
 
 def expected_gain(
     recall_now: float,
     current: float | None,
-    elapsed_seconds: float,
     success: float,
     failure: float,
-    horizon_seconds: float,
 ) -> float:
     """Expected recallable seconds practising a card *right now* would **add**.
 
     The practice queue's ordering key, largest first. Practising is worth the
     difference between what the card will retain if it is reviewed and what it
-    would have retained if it were left alone, both measured over the same
-    wall-clock window ``[now, now + horizon]``::
+    would have retained if it were left alone::
 
         gain = E[∫R_after] − ∫R_current
 
-    The second term is where ``elapsed_seconds`` comes in: the card's current
-    curve is anchored at its last review, so the do-nothing area has to be
-    integrated from ``now − last_practiced`` rather than from 0.
+    Both integrals run to infinity, where :func:`retained_seconds` reduces to
+    ``H/ln2`` and the do-nothing baseline — the area still ahead of a curve
+    already part-way through its decay — is the same constant scaled by the recall
+    the card has left. So the whole key is three half-lives weighted by one
+    probability::
+
+        gain · ln2 = p·H_success + (1 − p)·H_failure − p·H_current
 
     Ordering on the increase rather than on the level is what greedily maximises
     the total recall held across the whole vocabulary, ``∫ Σ_cells R_cell(t) dt``:
@@ -268,26 +265,26 @@ def expected_gain(
     * **The gain can be negative.** A review risks a wrong answer, and the failure
       curve weighted by ``1 − recall_now`` can drag the expectation below the
       undisturbed current curve. That is a real signal — the card is better left
-      alone — so it is kept rather than clamped.
+      alone — so it is kept rather than clamped. About half the learned deck sits
+      here at any moment.
 
     Args:
-        recall_now: Current ``R(Δt)`` for the card, in ``(0, 1)`` — also the
-            probability the answer is right. For a word never practised in this
-            direction, the deck's first-attempt success rate stands in.
+        recall_now: Current ``R(Δt)`` for the card, in ``(0, 1)`` — the probability
+            the answer is right, and equally the fraction of its curve the card has
+            left. For a word never practised in this direction, the deck's
+            first-attempt success rate stands in.
         current: Half-life of the card's present curve, or ``None`` when the card
             has never been practised in this direction. A never-practised card
             retains nothing, so its baseline is 0 and its gain is the whole
             post-review area.
-        elapsed_seconds: Seconds since the card's last review, i.e. the ``Δt`` the
-            baseline integral starts at. Ignored when ``current`` is ``None``.
         success: Half-life of the curve fitted after a successful rep.
         failure: Half-life of the curve fitted after a failed rep.
-        horizon_seconds: Horizon for every integral.
 
     Returns:
-        Expected added recallable seconds, in ``[−horizon_seconds, horizon_seconds]``.
+        Expected added recallable seconds. Negative when the card is better left
+        alone than reviewed.
     """
-    after = expected_retained(recall_now, success, failure, horizon_seconds)
+    after = expected_retained(recall_now, success, failure)
     if current is None:
         return after
-    return after - retained_seconds(current, horizon_seconds, elapsed_seconds)
+    return after - recall_now * retained_seconds(current)

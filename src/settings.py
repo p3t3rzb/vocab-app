@@ -22,7 +22,11 @@ class AppSettings:
         recall_threshold: P(recall) level below which a word is considered due.
             Lower values mean longer intervals between repetitions.
         max_delta_seconds: Hard cap on the predicted interval to the next
-            repetition. Defaults to one year.
+            repetition. Defaults to one year; ``math.inf`` leaves it uncapped,
+            which the settings screen offers as "No maximum" and which round-trips
+            through the JSON file as ``Infinity``. It caps only *when* a word is
+            scheduled — the practice queue's ordering integrates the whole curve
+            and never consults it.
         appearance_mode: ``"Light"``, ``"Dark"``, or ``"System"`` — applied via
             ``ctk.set_appearance_mode`` at startup and when the user saves.
     """

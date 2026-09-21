@@ -26,8 +26,8 @@ class Word(BaseORM):
     hypothetical histories through the model is far too slow to do at session
     start, so they are precomputed by :class:`~src.model.inference.ParamScheduler`
     alongside the current half-life. Storing the half-life rather than the
-    resulting score keeps it independent of the user's threshold and horizon
-    settings, which stay applied live. Unlike the current half-life these are also
+    resulting score keeps it independent of the user's recall-threshold setting,
+    which stays applied live. Unlike the current half-life these are also
     computed for a direction with *no* history, since a never-practised card still
     has to be ranked.
 

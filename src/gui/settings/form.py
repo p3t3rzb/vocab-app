@@ -1,15 +1,16 @@
 """Form widgets and validation for the settings screen.
 
-:class:`SettingsForm` owns the three input widgets (threshold slider,
-max-interval entry, appearance radio buttons), the live threshold label,
-and the :meth:`read` validator that returns an :class:`AppSettings` or
-``None`` (after surfacing a warning dialog).
+:class:`SettingsForm` owns the four input widgets (threshold slider,
+max-interval entry, its "No maximum" checkbox, appearance radio buttons), the
+live threshold label, and the :meth:`read` validator that returns an
+:class:`AppSettings` or ``None`` (after surfacing a warning dialog).
 
 The view never touches Tk variables directly — it only calls
 :meth:`read`, :meth:`set_enabled`, and the :attr:`appearance` property.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from tkinter import messagebox
 
@@ -39,8 +40,13 @@ class SettingsForm:
 
         self._threshold_var = ctk.DoubleVar(value=initial.recall_threshold)
         self._threshold_label_var = ctk.StringVar(value=f"{initial.recall_threshold:.2f}")
+        # An unlimited interval leaves the day entry greyed out, so it still needs
+        # a sensible number to show and to fall back to if the box is unticked.
+        unlimited = math.isinf(initial.max_delta_seconds)
+        self._no_max_var = ctk.BooleanVar(value=unlimited)
+        shown = AppSettings().max_delta_seconds if unlimited else initial.max_delta_seconds
         self._max_days_var = ctk.StringVar(
-            value=str(int(round(initial.max_delta_seconds / _SECONDS_PER_DAY)))
+            value=str(int(round(shown / _SECONDS_PER_DAY)))
         )
         self._appearance_var = ctk.StringVar(value=initial.appearance_mode)
 
@@ -101,15 +107,31 @@ class SettingsForm:
 
         ctk.CTkLabel(
             self._parent,
-            text="Hard cap on how far into the future a word can be scheduled.",
+            text=(
+                "Hard cap on how far into the future a word can be scheduled. "
+                "With no maximum a word is scheduled as far out as its forgetting "
+                "curve says, which the ordering of a practice session does not "
+                "depend on either way."
+            ),
             anchor="w", wraplength=560, text_color="gray",
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
         row += 1
 
+        max_row = ctk.CTkFrame(self._parent, fg_color="transparent")
+        max_row.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
+
         self._max_days_entry = ctk.CTkEntry(
-            self._parent, textvariable=self._max_days_var, width=120,
+            max_row, textvariable=self._max_days_var, width=120,
         )
-        self._max_days_entry.grid(row=row, column=0, sticky="w", pady=(0, 4))
+        self._max_days_entry.pack(side="left")
+
+        self._no_max_check = ctk.CTkCheckBox(
+            max_row,
+            text="No maximum",
+            variable=self._no_max_var,
+            command=self._sync_max_days_entry,
+        )
+        self._no_max_check.pack(side="left", padx=(12, 0))
         row += 1
 
         # Appearance
@@ -130,12 +152,21 @@ class SettingsForm:
                 command=self._handle_appearance,
             ).pack(side="left", padx=(0, 16))
 
+        # Honour an already-unlimited setting: the entry starts greyed out.
+        self._sync_max_days_entry()
+
     # ------------------------------------------------------------------
     # Event handlers
     # ------------------------------------------------------------------
 
     def _on_threshold_change(self, value: float) -> None:
         self._threshold_label_var.set(f"{float(value):.2f}")
+
+    def _sync_max_days_entry(self) -> None:
+        """Grey the day entry out while "No maximum" is ticked."""
+        self._max_days_entry.configure(
+            state="disabled" if self._no_max_var.get() else "normal"
+        )
 
     def _handle_appearance(self) -> None:
         self._on_appearance_change(self._appearance_var.get())
@@ -151,26 +182,31 @@ class SettingsForm:
 
     def read(self) -> AppSettings | None:
         """Validate inputs and return a new :class:`AppSettings`, or ``None`` on error."""
-        try:
-            days = int(self._max_days_var.get().strip())
-        except ValueError:
-            messagebox.showwarning(
-                "Invalid input",
-                "Max repetition interval must be an integer number of days.",
-                parent=self._parent,
-            )
-            return None
-        min_days, max_days = Limits.MAX_INTERVAL_DAYS
-        if not (min_days <= days <= max_days):
-            messagebox.showwarning(
-                "Out of range",
-                f"Max repetition interval must be between {min_days} and {max_days} days.",
-                parent=self._parent,
-            )
-            return None
+        if self._no_max_var.get():
+            max_delta_seconds = math.inf
+        else:
+            try:
+                days = int(self._max_days_var.get().strip())
+            except ValueError:
+                messagebox.showwarning(
+                    "Invalid input",
+                    "Max repetition interval must be an integer number of days.",
+                    parent=self._parent,
+                )
+                return None
+            min_days, max_days = Limits.MAX_INTERVAL_DAYS
+            if not (min_days <= days <= max_days):
+                messagebox.showwarning(
+                    "Out of range",
+                    f"Max repetition interval must be between {min_days} and "
+                    f"{max_days} days, or tick \u201cNo maximum\u201d.",
+                    parent=self._parent,
+                )
+                return None
+            max_delta_seconds = float(days) * _SECONDS_PER_DAY
         return AppSettings(
             recall_threshold=round(float(self._threshold_var.get()), 4),
-            max_delta_seconds=float(days) * _SECONDS_PER_DAY,
+            max_delta_seconds=max_delta_seconds,
             appearance_mode=self._appearance_var.get(),
         )
 
@@ -178,4 +214,7 @@ class SettingsForm:
         """Enable or disable all editable widgets in the form."""
         state = "normal" if enabled else "disabled"
         self._threshold_slider.configure(state=state)
-        self._max_days_entry.configure(state=state)
+        self._no_max_check.configure(state=state)
+        self._max_days_entry.configure(
+            state="normal" if enabled and not self._no_max_var.get() else "disabled"
+        )
