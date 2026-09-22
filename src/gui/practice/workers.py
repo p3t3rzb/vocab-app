@@ -73,7 +73,7 @@ def answer_worker(
     predictor: RecallEstimator | None,
     out_queue: queue_module.Queue,
 ) -> None:
-    """Record one repetition, store its recomputed half-lives, and derive the due time.
+    """Record one repetition, store its recomputed time constants, and derive the due time.
 
     Recomputes all three of the direction's curves from the history including the
     answer just given — the current one plus the two a further review would
@@ -82,7 +82,7 @@ def answer_worker(
 
     Returns ``("answered", card, practiced_at, next_ts, curves)`` where ``next_ts``
     is the live next-review timestamp (``None`` if no estimator) and ``curves`` is
-    the ``(current, success, failure)`` half-life triple just stored, each ``None``
+    the ``(current, success, failure)`` time-constant triple just stored, each ``None``
     if they could not be computed. Scoring is left to the caller, which owns the moment the
     card is actually served — a gain depends on that moment, so computing one here
     would only date it to the answer instead.
@@ -110,8 +110,8 @@ def answer_worker(
                 all_reps = reps_repo.get_for_word(card.word_id, card.direction)
                 cfg = predictor.config
                 try:
-                    current = predictor.half_life(all_reps, card.direction)
-                    success, failure = predictor.post_rep_half_lives(
+                    current = predictor.time_constant(all_reps, card.direction)
+                    success, failure = predictor.post_rep_time_constants(
                         [(all_reps, card.direction)], practiced_at
                     )[0]
                     delta = invert_curve(
@@ -119,7 +119,7 @@ def answer_worker(
                     )
                     next_ts = practiced_at + int(delta)
                 except Exception:
-                    # Leave the half-lives NULL so the next param pass recomputes
+                    # Leave the time constants NULL so the next param pass recomputes
                     # them; the caller sorts an unscoreable card to the back.
                     current = success = failure = None
                     next_ts = 0
@@ -127,10 +127,10 @@ def answer_worker(
                 word = WordRepository(session).get_by_id(card.word_id)
                 if word is not None:
                     prefix = "fwd" if card.direction is Direction.FORWARD else "rev"
-                    for suffix, h in zip(
+                    for suffix, tau in zip(
                         ("", "_ok", "_no"), (current, success, failure)
                     ):
-                        setattr(word, f"{prefix}{suffix}_h", h)
+                        setattr(word, f"{prefix}{suffix}_tau", tau)
 
         out_queue.put(
             ("answered", card, practiced_at, next_ts, (current, success, failure))

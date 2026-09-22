@@ -9,7 +9,7 @@ import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import Engine, create_engine, select, text
+from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from .models import BaseORM, LanguagePair
@@ -41,11 +41,6 @@ class Database:
         Calling it again with a different URL replaces the active engine; the
         previous engine is disposed.
 
-        Also performs an idempotent migration: the per-direction half-life
-        columns (``fwd_h`` / ``rev_h`` and their ``_ok`` / ``_no`` variants) are
-        added via ``ALTER TABLE`` on databases that pre-date them, and the
-        obsolete due-timestamp and three-parameter curve columns are dropped.
-
         Args:
             database_url: SQLAlchemy URL such as
                 ``sqlite:///storage/french_polish.db``.
@@ -66,7 +61,6 @@ class Database:
             expire_on_commit=False,
         )
 
-        self._run_migrations(engine)
         self._seed_language_pair(factory, source_language, target_language)
         self._swap(engine, factory)
 
@@ -94,47 +88,6 @@ class Database:
             raise
         finally:
             session.close()
-
-    @staticmethod
-    def _run_migrations(engine: Engine) -> None:
-        """Migrate pre-existing databases to the per-direction half-life columns.
-
-        Adds the six ``fwd_h`` / ``rev_h`` REAL columns (current curve plus the
-        ``_ok`` / ``_no`` post-review ones) if missing, and drops the columns they
-        replace: the obsolete due timestamps (``next_repetition_at`` and the
-        per-direction ``next_rep_fwd_at`` / ``next_rep_rev_at``) and the eighteen
-        ``p0`` / ``s`` / ``d`` columns of the earlier three-parameter curve.
-        ``DROP COLUMN`` requires SQLite ≥ 3.35, bundled with Python 3.13.
-
-        The new columns arrive NULL; the practice queue shows such cards first so
-        they get rescored, and one param pass fills them in. The old params are
-        not converted — they parameterise a different curve family, and a model
-        retrain rewrites every one of them anyway.
-        """
-        with engine.connect() as conn:
-            cols = [row[1] for row in conn.execute(text("PRAGMA table_info(words)"))]
-            changed = False
-            half_life_cols = [
-                f"{direction}{outcome}_h"
-                for direction in ("fwd", "rev")
-                for outcome in ("", "_ok", "_no")
-            ]
-            for col_name in half_life_cols:
-                if col_name not in cols:
-                    conn.execute(text(f"ALTER TABLE words ADD COLUMN {col_name} REAL"))
-                    changed = True
-            obsolete = ["next_repetition_at", "next_rep_fwd_at", "next_rep_rev_at"] + [
-                f"{direction}{outcome}_{param}"
-                for direction in ("fwd", "rev")
-                for outcome in ("", "_ok", "_no")
-                for param in ("p0", "s", "d")
-            ]
-            for col_name in obsolete:
-                if col_name in cols:
-                    conn.execute(text(f"ALTER TABLE words DROP COLUMN {col_name}"))
-                    changed = True
-            if changed:
-                conn.commit()
 
     @staticmethod
     def _seed_language_pair(

@@ -1,6 +1,6 @@
 """Batched final-timestep forward, shared by the inference paths.
 
-Both the param scheduler (every word's stored half-life) and the expected-gain
+Both the param scheduler (every word's stored time constant) and the expected-gain
 scoring need the same thing: run a pile of variable-length histories through the
 model and read off each one's *final* timestep. The read-off is indexed by each
 sequence's own length, so padded steps never leak into the result.
@@ -17,16 +17,16 @@ from __future__ import annotations
 
 import torch
 
-from ..curve import half_life
+from ..curve import time_constant
 from ..lstm import RecallLSTM
 
 
-def final_step_half_lives(
+def final_step_time_constants(
     model: RecallLSTM,
     sequences: list[list[list[float]]],
     chunk_size: int | None = None,
 ) -> list[float]:
-    """Forward every sequence and return its final timestep's half-life.
+    """Forward every sequence and return its final timestep's time constant.
 
     Args:
         model: Trained network, already on its device and in ``eval`` mode.
@@ -36,7 +36,8 @@ def final_step_half_lives(
             batch — only safe when the caller has already chunked.
 
     Returns:
-        One half-life in seconds per input sequence, in the caller's original order.
+        One time constant in seconds per input sequence, in the caller's original
+        order.
     """
     if not sequences:
         return []
@@ -66,8 +67,8 @@ def final_step_half_lives(
 
         idx = torch.tensor([n - 1 for n in lengths], device=device)
         raw_last = raw[torch.arange(len(picks), device=device), idx]  # (B, 1)
-        h = half_life(raw_last)  # (B,)
+        tau = time_constant(raw_last)  # (B,)
         for pos, i in enumerate(picks):
-            out[i] = h[pos].item()
+            out[i] = tau[pos].item()
 
     return out  # type: ignore[return-value]

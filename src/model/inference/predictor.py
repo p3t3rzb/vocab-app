@@ -1,8 +1,8 @@
 """Per-word inference helper for a trained :class:`RecallLSTM`.
 
-The model predicts the half-life of a forgetting curve from a word's repetition
-history; this helper turns that half-life into a point recall probability at a
-given gap and into an analytically-derived next-review time (no bisection — see
+The model predicts the time constant of a forgetting curve from a word's
+repetition history; this helper turns that time constant into a point recall
+probability at a given gap and into an analytically-derived next-review time (no bisection — see
 :func:`src.model.curve.next_delta`).
 """
 from __future__ import annotations
@@ -13,10 +13,10 @@ from src.database import Direction
 from src.database.models import Repetition
 
 from ..config import PredictConfig, ScheduleConfig
-from ..curve import curve_recall, half_life, next_delta
+from ..curve import curve_recall, next_delta, time_constant
 from ..features import history_rows, rep_row
 from ..lstm import RecallLSTM
-from .batch import final_step_half_lives
+from .batch import final_step_time_constants
 
 
 class Predictor:
@@ -61,8 +61,8 @@ class Predictor:
             raw = self._model(x)  # (1, L, 1)
         return raw[0, -1]  # (1,)
 
-    def half_life(self, reps: list[Repetition], direction: Direction) -> float:
-        """Return the activated curve half-life, in seconds, for the next test.
+    def time_constant(self, reps: list[Repetition], direction: Direction) -> float:
+        """Return the activated curve time constant, in seconds, for the next test.
 
         This is the value persisted per (word, direction) so recall and
         next-review time can be derived live without another model forward.
@@ -74,7 +74,7 @@ class Predictor:
         Raises:
             ValueError: if ``reps`` is empty.
         """
-        return float(half_life(self._raw_param(reps, direction)))
+        return float(time_constant(self._raw_param(reps, direction)))
 
     def recall_probability(
         self, reps: list[Repetition], delta_seconds: float, direction: Direction
@@ -103,13 +103,13 @@ class Predictor:
             raw_last, self._config.recall_threshold, self._config.max_delta_seconds
         )
 
-    def post_rep_half_lives(
+    def post_rep_time_constants(
         self,
         histories: list[tuple[list[Repetition], Direction]],
         practiced_at: int,
         chunk_size: int | None = None,
     ) -> list[tuple[float, float]]:
-        """Half-life each card's curve would take if it were answered now.
+        """Time constant each card's curve would take if it were answered now.
 
         Appends a *hypothetical* repetition at ``practiced_at`` to each history —
         once remembered, once forgotten — and reads off the curve the model fits
@@ -128,7 +128,7 @@ class Predictor:
                 :attr:`ScheduleConfig.batch_sequences`.
 
         Returns:
-            One ``(success_h, failure_h)`` per card, in the input order.
+            One ``(success_tau, failure_tau)`` per card, in the input order.
         """
         sequences: list[list[list[float]]] = []
         for reps, direction in histories:
@@ -137,9 +137,9 @@ class Predictor:
             sequences.append(rows + [rep_row(gap, True, direction)])
             sequences.append(rows + [rep_row(gap, False, direction)])
 
-        lives = final_step_half_lives(
+        taus = final_step_time_constants(
             self._model,
             sequences,
             chunk_size=chunk_size or ScheduleConfig().batch_sequences,
         )
-        return [(lives[2 * i], lives[2 * i + 1]) for i in range(len(histories))]
+        return [(taus[2 * i], taus[2 * i + 1]) for i in range(len(histories))]

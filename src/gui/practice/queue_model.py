@@ -44,14 +44,14 @@ from src.model.curve import expected_gain, invert_curve, recall_at
 
 # Priority for a card whose post-review curves have not been computed yet (a
 # database predating them). Scores are negated gains in *seconds*, and a gain is a
-# half-life scaled by 1/ln2, so the deck's longest curve bounds them — years, i.e.
+# time constant, so the deck's longest curve bounds them — years, i.e.
 # ~1e8 — and no real card comes near this. Such cards are shown first, which gets
 # them rescored. A random offset in [0, 1) shuffles them among themselves.
 _UNSCORED_PRIORITY = -1e18
 
 #: Priority floor for never-practised ("new") cards: always after any learned
 #: card, whose priority is a negated gain in seconds and so bounded by the deck's
-#: longest half-life (~1e8). Each new card sits at this base plus its own offset,
+#: longest time constant (~1e8). Each new card sits at this base plus its own offset,
 #: which is why the base stays at 1e15: float64 still resolves a 0.5 step there.
 _NEW_PRIORITY_BASE = 1e15
 
@@ -131,15 +131,15 @@ class PracticeQueue:
         return len(self._heap)
 
 
-def _half_life(word, direction: Direction, suffix: str) -> float | None:
-    """Return one stored half-life, or ``None`` if it is unset.
+def _time_constant(word, direction: Direction, suffix: str) -> float | None:
+    """Return one stored time constant, or ``None`` if it is unset.
 
     ``suffix`` selects which of a direction's three curves to read: ``""`` for the
     current one, ``"_ok"`` / ``"_no"`` for the curves a remembered / forgotten
     answer right now would produce.
     """
     prefix = "fwd" if direction is Direction.FORWARD else "rev"
-    return getattr(word, f"{prefix}{suffix}_h")
+    return getattr(word, f"{prefix}{suffix}_tau")
 
 
 def card_gain(card: Card, now: int) -> float:
@@ -155,13 +155,13 @@ def card_gain(card: Card, now: int) -> float:
     The gain integrates the curve out to infinity rather than over a finite
     retention horizon, which costs the served order nothing: the recall threshold
     already excludes the cards a horizon would affect. A horizon only bites on a
-    curve whose half-life is comparable to it, and a card with a half-life that
-    long still has high recall, so it is parked in the waiting heap rather than
-    served. The due pool's median half-life on the French deck is ~3.5 days —
+    curve whose time constant is comparable to it, and a card with a time constant
+    that long still has high recall, so it is parked in the waiting heap rather than
+    served. The due pool's median time constant on the French deck is ~5 days —
     saturated to machine precision inside any horizon worth setting — and the
     order it produces is identical for the first 1201 of 1874 due cards, differing
     only in the long-abandoned tail. Where the two do diverge is the extra-practice
-    phase (:func:`drain_waiting`), which serves exactly the long-half-life cards a
+    phase (:func:`drain_waiting`), which serves exactly the long-τ cards a
     finite horizon was clipping.
 
     Args:
@@ -266,7 +266,7 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     for word in words:
         for direction in Direction:
             last = last_by_dir.get((word.id, int(direction)))
-            current = _half_life(word, direction, "")
+            current = _time_constant(word, direction, "")
 
             card = Card(
                 word_id=word.id,
@@ -276,8 +276,8 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
                 last_practiced=last,
                 score=0.0,
                 current=current,
-                success=_half_life(word, direction, "_ok"),
-                failure=_half_life(word, direction, "_no"),
+                success=_time_constant(word, direction, "_ok"),
+                failure=_time_constant(word, direction, "_no"),
             )
 
             if last is None:

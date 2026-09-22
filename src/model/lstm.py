@@ -1,7 +1,7 @@
 """The :class:`RecallLSTM` network definition.
 
 A small 2-layer LSTM that predicts, at each step in a repetition sequence, the
-*half-life of a forgetting curve* ``R(Δt) = 2**(−Δt/H)`` (see
+*time constant of a forgetting curve* ``R(Δt) = exp(−Δt/τ)`` (see
 :mod:`src.model.curve`) rather than ``P(remembered)`` directly. Recall
 probability is obtained by evaluating that curve at the queried gap, and the
 next-review time is found by inverting the curve analytically.
@@ -14,11 +14,11 @@ raw output depends on past events alone.
 import torch
 import torch.nn as nn
 
-from .curve import LOG2_HALF_LIFE_INIT
+from .curve import LOG_TAU_INIT
 
 
 class RecallLSTM(nn.Module):
-    """Predicts a forgetting-curve half-life at each step in a repetition sequence.
+    """Predicts a forgetting-curve time constant at each step in a repetition sequence.
 
     Input per timestep is ``[log(Δt_prev + 1), prev_remembered,
     prev_not_remembered, is_forward, is_reverse]``: the log-time elapsed before
@@ -27,8 +27,8 @@ class RecallLSTM(nn.Module):
     the practice direction. Direction is constant across the sequence but
     supplied at every step so the LSTM can condition its dynamics on it without
     relying on the initial state surviving long histories. The output is one raw
-    channel per step — ``log2(H)``, turned into the half-life itself by
-    :mod:`src.model.curve` — biased at init to a three-day half-life.
+    channel per step — ``ln(τ)``, turned into the time constant itself by
+    :mod:`src.model.curve` — biased at init to a three-day time constant.
     """
 
     def __init__(
@@ -64,9 +64,9 @@ class RecallLSTM(nn.Module):
         )
         self.drop = nn.Dropout(dropout)
         self.head = nn.Linear(hidden_size, 1)
-        # The head emits log2(half-life in seconds); start it at three days so the
-        # first forward already predicts on the scale real gaps have.
-        nn.init.constant_(self.head.bias, LOG2_HALF_LIFE_INIT)
+        # The head emits ln(time constant in seconds); start it at three days so
+        # the first forward already predicts on the scale real gaps have.
+        nn.init.constant_(self.head.bias, LOG_TAU_INIT)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass.

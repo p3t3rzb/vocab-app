@@ -32,17 +32,17 @@ def _due_sort_key(ts: int | None) -> tuple[bool, int]:
 
 
 def _due_ts(
-    h: float | None,
+    tau: float | None,
     last: int | None,
     cfg: PredictConfig,
 ) -> int | None:
-    """Live next-review timestamp from the stored half-life, or ``None`` if unknown.
+    """Live next-review timestamp from the stored time constant, or ``None`` if unknown.
 
-    ``None`` when the direction has no half-life (not yet computed) or no history.
+    ``None`` when the direction has no time constant (not yet computed) or no history.
     """
-    if h is None or last is None:
+    if tau is None or last is None:
         return None
-    return last + int(invert_curve(h, cfg.recall_threshold, cfg.max_delta_seconds))
+    return last + int(invert_curve(tau, cfg.recall_threshold, cfg.max_delta_seconds))
 
 
 def _build_due_cache(
@@ -50,12 +50,12 @@ def _build_due_cache(
     last_by_dir: dict[tuple[int, int], int],
     cfg: PredictConfig,
 ) -> dict[int, tuple[int | None, int | None]]:
-    """Compute every word's (fwd_due_ts, rev_due_ts) from stored half-lives, once."""
+    """Compute every word's (fwd_due_ts, rev_due_ts) from stored time constants, once."""
     fwd, rev = int(Direction.FORWARD), int(Direction.REVERSE)
     return {
         w.id: (
-            _due_ts(w.fwd_h, last_by_dir.get((w.id, fwd)), cfg),
-            _due_ts(w.rev_h, last_by_dir.get((w.id, rev)), cfg),
+            _due_ts(w.fwd_tau, last_by_dir.get((w.id, fwd)), cfg),
+            _due_ts(w.rev_tau, last_by_dir.get((w.id, rev)), cfg),
         )
         for w in words
     }

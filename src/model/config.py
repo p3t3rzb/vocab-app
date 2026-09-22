@@ -58,8 +58,8 @@ class PredictConfig:
     The next-review time is found by inverting the predicted forgetting curve
     analytically (see :func:`src.model.curve.next_delta`), so only the recall
     threshold and the hard interval cap are needed. Inverting an exponential is
-    linear in the half-life, so the threshold scales every word's interval by the
-    same factor: at ``0.8`` a word is reviewed after ``0.32 × H``.
+    linear in the time constant, so the threshold scales every word's interval by
+    the same factor: at ``0.8`` a word is reviewed after ``0.22 × τ``.
 
     Attributes:
         recall_threshold: P(recall) level below which a word is due for review.
@@ -80,7 +80,7 @@ class HeuristicConfig:
     consumed exactly like a trained model's.
 
     ``reference_threshold`` is deliberately a constant here rather than the
-    user's :class:`PredictConfig` setting: the stored half-life must stay
+    user's :class:`PredictConfig` setting: the stored time constant must stay
     threshold-independent (the user's threshold is applied live, downstream).
     It is the recall level at which the intervals below are the ones actually
     produced; raising the user's threshold shortens them from there.

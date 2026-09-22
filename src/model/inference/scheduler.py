@@ -1,8 +1,8 @@
-"""Batched param computation: persist each word's forgetting-curve half-lives.
+"""Batched param computation: persist each word's forgetting-curve time constants.
 
 Words are processed in chunks of :attr:`ScheduleConfig.chunk_size`. Within each
 chunk every (word, direction) is forwarded through the model in a single batched
-call to get **three** curves' worth of half-life, all stored on the word:
+call to get **three** curves' worth of time constant, all stored on the word:
 
 * the *current* curve, from the history as it stands — the one recall and the
   next-review time are derived from,
@@ -20,7 +20,7 @@ at ``NULL``. Such a card does not compete on gain: the queue trails it behind
 every learned card and orders it by a shuffle, so none of its curves is ever
 read. The ``NULL`` current curve is also what marks the card as new.
 
-Everything derived from these half-lives — recall score, next-review time, queue
+Everything derived from these time constants — recall score, next-review time, queue
 score — is computed *live* (see :mod:`src.model.curve`), so the recall threshold
 can change without recomputing anything here.
 """
@@ -41,18 +41,18 @@ from ..checkpoint import load_model
 from ..config import HeuristicConfig, ScheduleConfig
 from ..features import history_rows, rep_row
 from ..lstm import RecallLSTM
-from .batch import final_step_half_lives
+from .batch import final_step_time_constants
 from .heuristic import HeuristicPredictor
 
 ProgressFn = Callable[[int, int], None]
 
-#: One direction's three half-lives: ``(current, after_remembered, after_forgotten)``.
+#: One direction's three time constants: ``(current, after_remembered, after_forgotten)``.
 #: ``current`` is ``None`` when that direction has no history yet.
 CardCurves = tuple[float | None, float, float]
 
 
 class ParamScheduler:
-    """Compute every word's curve half-lives from the model in batched form."""
+    """Compute every word's curve time constants from the model in batched form."""
 
     def __init__(
         self,
@@ -69,7 +69,7 @@ class ParamScheduler:
         on_progress: ProgressFn | None = None,
         stop_event: threading.Event | None = None,
     ) -> None:
-        """Compute and persist the per-direction curve half-lives for every word."""
+        """Compute and persist the per-direction curve time constants for every word."""
         with get_session() as session:
             all_words = list(session.scalars(select(Word).order_by(Word.id)))
             all_reps = list(
@@ -144,15 +144,15 @@ class ParamScheduler:
         by_key: dict[tuple[int, int], list[float | None]] = defaultdict(
             lambda: [None, None, None]
         )
-        for (key, which), h in zip(
+        for (key, which), tau in zip(
             slots,
-            final_step_half_lives(
+            final_step_time_constants(
                 self._model,
                 sequences,
                 chunk_size=self._schedule_cfg.batch_sequences,
             ),
         ):
-            by_key[key][which] = h
+            by_key[key][which] = tau
 
         def curves(key: tuple[int, int]) -> CardCurves:
             current, ok, no = by_key[key]
@@ -170,22 +170,22 @@ class ParamScheduler:
 
 
 def _column_values(prefix: str, curves: CardCurves) -> dict[str, float | None]:
-    """Flatten one direction's three half-lives into its three ``words`` columns.
+    """Flatten one direction's three time constants into its three ``words`` columns.
 
     ``prefix`` is ``"fwd"`` or ``"rev"``; the current curve takes the bare
-    ``<prefix>_h`` name and the two hypothetical ones the ``_ok`` / ``_no``
+    ``<prefix>_tau`` name and the two hypothetical ones the ``_ok`` / ``_no``
     variants. A ``None`` curve leaves its column at SQL ``NULL``.
     """
     return {
-        f"{prefix}{suffix}_h": h
-        for suffix, h in zip(("", "_ok", "_no"), curves)
+        f"{prefix}{suffix}_tau": tau
+        for suffix, tau in zip(("", "_ok", "_no"), curves)
     }
 
 
 def _persist_params(
     chunk_updates: dict[int, tuple[CardCurves, CardCurves]],
 ) -> None:
-    """Write both directions' curve half-lives for a chunk of words in one session.
+    """Write both directions' curve time constants for a chunk of words in one session.
 
     A direction with no history has all three curves ``None``, so its columns go
     to SQL ``NULL`` — the word list renders "–" and the practice queue treats the
@@ -203,7 +203,7 @@ def _persist_params(
 def backfill_heuristic_params(
     heuristic_cfg: HeuristicConfig | None = None,
 ) -> int:
-    """Fill in curve half-lives from repetition history *without* a trained model.
+    """Fill in curve time constants from repetition history *without* a trained model.
 
     The model-free counterpart of :func:`compute_all_params`, for a language pair
     that has no checkpoint yet: it runs :class:`HeuristicPredictor` over every
@@ -247,8 +247,8 @@ def backfill_heuristic_params(
             if not reps:
                 per_direction.append((None, None, None))
                 continue
-            current = predictor.half_life(reps, direction)
-            ok, no = predictor.post_rep_half_lives([(reps, direction)], now)[0]
+            current = predictor.time_constant(reps, direction)
+            ok, no = predictor.post_rep_time_constants([(reps, direction)], now)[0]
             per_direction.append((current, ok, no))
         updates[word_id] = (per_direction[0], per_direction[1])
 
@@ -263,7 +263,7 @@ def compute_all_params(
     stop_event: threading.Event | None = None,
     schedule_cfg: ScheduleConfig | None = None,
 ) -> None:
-    """Load the checkpoint and recompute every word's forgetting-curve half-lives.
+    """Load the checkpoint and recompute every word's forgetting-curve time constants.
 
     The recall threshold / max interval are *not* applied here — they are honoured
     live when recall and due times are derived from the stored params.

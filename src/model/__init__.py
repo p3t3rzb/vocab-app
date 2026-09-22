@@ -8,9 +8,9 @@ Public surface:
 * :func:`load_model` — load a saved checkpoint.
 * :class:`Predictor` — per-word recall probability and next-review estimates.
 * :class:`HeuristicPredictor` — SM-2-style stand-in used when a language pair
-  has no trained checkpoint yet (same half-life output, no model needed).
+  has no trained checkpoint yet (same time-constant output, no model needed).
 * :class:`Trainer`, :func:`train` — training entry points.
-* :func:`compute_all_params` — batched recomputation of every word's half-life.
+* :func:`compute_all_params` — batched recomputation of every word's time constant.
 * :func:`backfill_heuristic_params` — the same, model-free, for untrained pairs.
 * :func:`retained_seconds`, :func:`expected_retained`, :func:`expected_gain` —
   the area under a forgetting curve, the expected area a card would hold after a
