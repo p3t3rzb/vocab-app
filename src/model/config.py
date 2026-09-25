@@ -59,7 +59,9 @@ class PredictConfig:
     analytically (see :func:`src.model.curve.next_delta`), so only the recall
     threshold and the hard interval cap are needed. Inverting an exponential is
     linear in the time constant, so the threshold scales every word's interval by
-    the same factor: at ``0.8`` a word is reviewed after ``0.22 × τ``.
+    the same factor: under a ceiling of 1, a threshold of ``0.8`` reviews every
+    word after ``ln(1/0.8) = 0.22 × τ``. A lower ceiling shortens that, again by
+    one factor shared across the deck.
 
     Attributes:
         recall_threshold: P(recall) level below which a word is due for review.

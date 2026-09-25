@@ -9,7 +9,12 @@ class LanguagePair(BaseORM):
     """Single-row table identifying the languages stored in this database.
 
     Every database has exactly one language pair row, pinned to
-    :attr:`SINGLETON_ID`.
+    :attr:`SINGLETON_ID`. It carries nothing but the languages: the curve
+    parameters are all predicted per cell and live on
+    :class:`~src.database.models.Word`.
+
+    Attributes:
+        source_language / target_language: The pair's languages.
     """
 
     __tablename__ = "language_pair"

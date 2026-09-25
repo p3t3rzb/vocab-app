@@ -1,8 +1,8 @@
 """Per-word inference helper for a trained :class:`RecallLSTM`.
 
-The model predicts the time constant of a forgetting curve from a word's
-repetition history; this helper turns that time constant into a point recall
-probability at a given gap and into an analytically-derived next-review time (no bisection — see
+The model predicts both parameters of a forgetting curve from a word's repetition
+history; this helper turns that curve into a point recall probability at a given
+gap and into an analytically-derived next-review time (no bisection — see
 :func:`src.model.curve.next_delta`).
 """
 from __future__ import annotations
@@ -13,10 +13,10 @@ from src.database import Direction
 from src.database.models import Repetition
 
 from ..config import PredictConfig, ScheduleConfig
-from ..curve import curve_recall, next_delta, time_constant
+from ..curve import Curve, curve_from, curve_recall, next_delta
 from ..features import history_rows, rep_row
 from ..lstm import RecallLSTM
-from .batch import final_step_time_constants
+from .batch import final_step_curves
 
 
 class Predictor:
@@ -61,11 +61,13 @@ class Predictor:
             raw = self._model(x)  # (1, L, 1)
         return raw[0, -1]  # (1,)
 
-    def time_constant(self, reps: list[Repetition], direction: Direction) -> float:
-        """Return the activated curve time constant, in seconds, for the next test.
+    def curve(self, reps: list[Repetition], direction: Direction) -> Curve:
+        """Return the whole activated curve for the next test.
 
-        This is the value persisted per (word, direction) so recall and
-        next-review time can be derived live without another model forward.
+        Both parameters are persisted per (word, direction) so recall and
+        next-review time can be derived live without another model forward. They
+        are returned together because a time constant beside the wrong ceiling is
+        silently wrong.
 
         Args:
             reps: Repetition history, oldest first. Must be non-empty.
@@ -74,7 +76,7 @@ class Predictor:
         Raises:
             ValueError: if ``reps`` is empty.
         """
-        return float(time_constant(self._raw_param(reps, direction)))
+        return curve_from(self._raw_param(reps, direction))
 
     def recall_probability(
         self, reps: list[Repetition], delta_seconds: float, direction: Direction
@@ -92,24 +94,25 @@ class Predictor:
         """
         raw_last = self._raw_param(reps, direction)
         delta = torch.tensor([[delta_seconds]], dtype=torch.float32, device=self._device)
-        return curve_recall(delta, raw_last.view(1, 1, 1)).item()
+        return curve_recall(delta, raw_last.view(1, 1, -1)).item()
 
     def next_repetition_delta(
         self, reps: list[Repetition], direction: Direction
     ) -> float:
         """Seconds-until-next-review, by analytically inverting the forgetting curve."""
-        raw_last = self._raw_param(reps, direction)
         return next_delta(
-            raw_last, self._config.recall_threshold, self._config.max_delta_seconds
+            self._raw_param(reps, direction),
+            self._config.recall_threshold,
+            self._config.max_delta_seconds,
         )
 
-    def post_rep_time_constants(
+    def post_rep_curves(
         self,
         histories: list[tuple[list[Repetition], Direction]],
         practiced_at: int,
         chunk_size: int | None = None,
-    ) -> list[tuple[float, float]]:
-        """Time constant each card's curve would take if it were answered now.
+    ) -> list[tuple[Curve, Curve]]:
+        """The curve each card would take if it were answered now.
 
         Appends a *hypothetical* repetition at ``practiced_at`` to each history —
         once remembered, once forgotten — and reads off the curve the model fits
@@ -128,7 +131,10 @@ class Predictor:
                 :attr:`ScheduleConfig.batch_sequences`.
 
         Returns:
-            One ``(success_tau, failure_tau)`` per card, in the input order.
+            One ``(success_curve, failure_curve)`` per card, in the input order.
+            Each carries its own ceiling, emitted at the same timestep as its time
+            constant — which is the whole point of predicting the ceiling: the two
+            branches are free to start from different levels.
         """
         sequences: list[list[list[float]]] = []
         for reps, direction in histories:
@@ -137,9 +143,9 @@ class Predictor:
             sequences.append(rows + [rep_row(gap, True, direction)])
             sequences.append(rows + [rep_row(gap, False, direction)])
 
-        taus = final_step_time_constants(
+        curves = final_step_curves(
             self._model,
             sequences,
             chunk_size=chunk_size or ScheduleConfig().batch_sequences,
         )
-        return [(taus[2 * i], taus[2 * i + 1]) for i in range(len(histories))]
+        return [(curves[2 * i], curves[2 * i + 1]) for i in range(len(histories))]

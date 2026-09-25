@@ -1,4 +1,4 @@
-"""Keep stored half-lives consistent with the checkpoint that exists on disk.
+"""Keep stored time constants consistent with the checkpoint that exists on disk.
 
 The per-direction curve columns are written either by the trained model
 (:func:`~src.model.compute_all_params`) or by the model-free

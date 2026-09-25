@@ -40,12 +40,12 @@ from src.database import (
     get_session,
 )
 from src.model.config import PredictConfig
-from src.model.curve import expected_gain, invert_curve, recall_at
+from src.model.curve import Curve, expected_gain, invert_curve, recall_at
 
 # Priority for a card whose post-review curves have not been computed yet (a
-# database predating them). Scores are negated gains in *seconds*, and a gain is a
-# time constant, so the deck's longest curve bounds them — years, i.e.
-# ~1e8 — and no real card comes near this. Such cards are shown first, which gets
+# database predating them). Scores are negated gains in *seconds*, and a gain is
+# a difference of time constants, so the deck's longest curve bounds them —
+# years, i.e. ~1e8 — and no real card comes near this. Such cards are shown first, which gets
 # them rescored. A random offset in [0, 1) shuffles them among themselves.
 _UNSCORED_PRIORITY = -1e18
 
@@ -73,15 +73,17 @@ class Card:
     #: Expected retained seconds a review right now would add. The heap is keyed
     #: by its negation, so higher is practiced sooner.
     score: float
-    #: The direction's three stored half-lives: the present curve's (``None`` when
-    #: the card has never been practised in this direction) and those of the two a
-    #: remembered / forgotten answer would produce (``None`` only on a database
-    #: predating them, or after the answer worker failed). Carried so
-    #: :func:`card_gain` can re-score the card whenever it is served, instead of it
-    #: keeping the score it was built with.
-    current: float | None
-    success: float | None
-    failure: float | None
+    #: The direction's three stored curves, each a time constant with the ceiling
+    #: the model predicted beside it: the present curve (``None`` when the card has
+    #: never been practised in this direction) and those of the two a remembered /
+    #: forgotten answer would produce (``None`` only on a database predating them,
+    #: or after the answer worker failed). Carried so :func:`card_gain` can
+    #: re-score the card whenever it is served, instead of it keeping the score it
+    #: was built with.
+    current: Curve | None
+    success: Curve | None
+    failure: Curve | None
+
 
     def prompt_text(self) -> str:
         """Text shown before the answer is revealed."""
@@ -131,15 +133,21 @@ class PracticeQueue:
         return len(self._heap)
 
 
-def _time_constant(word, direction: Direction, suffix: str) -> float | None:
-    """Return one stored time constant, or ``None`` if it is unset.
+def _curve(word, direction: Direction, suffix: str) -> Curve | None:
+    """Return one stored curve, or ``None`` if it is unset.
 
     ``suffix`` selects which of a direction's three curves to read: ``""`` for the
     current one, ``"_ok"`` / ``"_no"`` for the curves a remembered / forgotten
     answer right now would produce.
+
+    The two columns are written together and are treated as one value here: if
+    either is ``NULL`` the curve is missing, since half a curve cannot be
+    evaluated.
     """
     prefix = "fwd" if direction is Direction.FORWARD else "rev"
-    return getattr(word, f"{prefix}{suffix}_tau")
+    tau = getattr(word, f"{prefix}{suffix}_tau")
+    p0 = getattr(word, f"{prefix}{suffix}_ceiling")
+    return None if tau is None or p0 is None else Curve(tau, p0)
 
 
 def card_gain(card: Card, now: int) -> float:
@@ -155,8 +163,8 @@ def card_gain(card: Card, now: int) -> float:
     The gain integrates the curve out to infinity rather than over a finite
     retention horizon, which costs the served order nothing: the recall threshold
     already excludes the cards a horizon would affect. A horizon only bites on a
-    curve whose time constant is comparable to it, and a card with a time constant
-    that long still has high recall, so it is parked in the waiting heap rather than
+    curve whose time constant is comparable to it, and a card with one that long
+    still has high recall, so it is parked in the waiting heap rather than
     served. The due pool's median time constant on the French deck is ~5 days —
     saturated to machine precision inside any horizon worth setting — and the
     order it produces is identical for the first 1201 of 1874 due cards, differing
@@ -179,8 +187,13 @@ def card_gain(card: Card, now: int) -> float:
         raise ValueError("card has no post-review curves to score")
     if card.current is None or card.last_practiced is None:
         raise ValueError("card has never been practised, so it has no gain to score")
-    recall = recall_at(card.current, float(now - card.last_practiced))
-    return expected_gain(recall, card.current, card.success, card.failure)
+    recall = recall_at(
+        card.current.tau, float(now - card.last_practiced), card.current.ceiling
+    )
+    # Only the current curve's *time constant* goes into the gain: its ceiling is
+    # already inside `recall`, and applying it twice is the trap `remaining_seconds`
+    # exists to prevent.
+    return expected_gain(recall, card.current.tau, card.success, card.failure)
 
 
 def drain_waiting(queue: PracticeQueue, waiting: PracticeQueue, now: int) -> int:
@@ -222,7 +235,7 @@ def drain_waiting(queue: PracticeQueue, waiting: PracticeQueue, now: int) -> int
 def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQueue]:
     """Build the (main, waiting) practice queues.
 
-    Both queues are filled from stored half-lives only — no model is loaded and no
+    Both queues are filled from stored time constants only — no model is loaded and no
     forward is run, so this stays fast enough to sit in front of the first card.
     The main queue holds the learned cards that are due, ordered by ``−score``
     (highest expected gain practiced first), with the new cards behind them; the
@@ -266,7 +279,7 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     for word in words:
         for direction in Direction:
             last = last_by_dir.get((word.id, int(direction)))
-            current = _time_constant(word, direction, "")
+            current = _curve(word, direction, "")
 
             card = Card(
                 word_id=word.id,
@@ -276,8 +289,8 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
                 last_practiced=last,
                 score=0.0,
                 current=current,
-                success=_time_constant(word, direction, "_ok"),
-                failure=_time_constant(word, direction, "_no"),
+                success=_curve(word, direction, "_ok"),
+                failure=_curve(word, direction, "_no"),
             )
 
             if last is None:
@@ -293,12 +306,17 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
 
             card.score = card_gain(card, now)
 
-            if recall_at(current, now - last) <= cfg.recall_threshold:
+            if recall_at(current.tau, now - last, current.ceiling) <= cfg.recall_threshold:
                 queue.push(card, -card.score)
             else:
                 # Not due yet — park it in the waiting heap keyed by due time.
                 due_ts = last + int(
-                    invert_curve(current, cfg.recall_threshold, cfg.max_delta_seconds)
+                    invert_curve(
+                        current.tau,
+                        cfg.recall_threshold,
+                        cfg.max_delta_seconds,
+                        current.ceiling,
+                    )
                 )
                 waiting.push(card, due_ts)
 

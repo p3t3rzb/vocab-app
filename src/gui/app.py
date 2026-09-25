@@ -52,7 +52,7 @@ class App(ctk.CTk):
         self._current_frame: ctk.CTkFrame | None = None
         self._ctx: DbContext | None = None
         # Word-list due-time cache: {word_id: (fwd_due_ts, rev_due_ts)}. Built
-        # once per database (it's derived from stored half-lives, not the
+        # once per database (it's derived from stored time constants, not the
         # clock) and reused across navigations. ``None`` means "rebuild on next
         # word-list load"; invalidated when params or the recall threshold change.
         self._due_cache: dict[int, tuple[int | None, int | None]] | None = None
@@ -94,7 +94,7 @@ class App(ctk.CTk):
     def invalidate_due_cache(self) -> None:
         """Drop the due-time cache so the word list rebuilds it on next load.
 
-        Called whenever the stored half-lives or the live recall threshold
+        Called whenever the stored time constants or the live recall threshold
         change (practice answers, training completion, settings save, DB switch).
         """
         self._due_cache = None

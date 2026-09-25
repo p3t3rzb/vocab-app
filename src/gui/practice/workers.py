@@ -39,7 +39,7 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
     gets real due times from its very first answer, which is what eventually
     produces the history a model can be trained on.
 
-    In the untrained case the stored half-lives are reconciled with the heuristic
+    In the untrained case the stored time constants are reconciled with the heuristic
     first (see :mod:`src.gui.model_sync`), so history recorded while the pair
     had no estimator — or scheduled by a checkpoint that has since been
     deleted — enters the queue correctly scored instead of sitting in the
@@ -82,7 +82,7 @@ def answer_worker(
 
     Returns ``("answered", card, practiced_at, next_ts, curves)`` where ``next_ts``
     is the live next-review timestamp (``None`` if no estimator) and ``curves`` is
-    the ``(current, success, failure)`` time-constant triple just stored, each ``None``
+    the ``(current, success, failure)`` time constant triple just stored, each ``None``
     if they could not be computed. Scoring is left to the caller, which owns the moment the
     card is actually served — a gain depends on that moment, so computing one here
     would only date it to the answer instead.
@@ -110,12 +110,15 @@ def answer_worker(
                 all_reps = reps_repo.get_for_word(card.word_id, card.direction)
                 cfg = predictor.config
                 try:
-                    current = predictor.time_constant(all_reps, card.direction)
-                    success, failure = predictor.post_rep_time_constants(
+                    current = predictor.curve(all_reps, card.direction)
+                    success, failure = predictor.post_rep_curves(
                         [(all_reps, card.direction)], practiced_at
                     )[0]
                     delta = invert_curve(
-                        current, cfg.recall_threshold, cfg.max_delta_seconds
+                        current.tau,
+                        cfg.recall_threshold,
+                        cfg.max_delta_seconds,
+                        current.ceiling,
                     )
                     next_ts = practiced_at + int(delta)
                 except Exception:
@@ -127,10 +130,21 @@ def answer_worker(
                 word = WordRepository(session).get_by_id(card.word_id)
                 if word is not None:
                     prefix = "fwd" if card.direction is Direction.FORWARD else "rev"
-                    for suffix, tau in zip(
+                    for suffix, curve in zip(
                         ("", "_ok", "_no"), (current, success, failure)
                     ):
-                        setattr(word, f"{prefix}{suffix}_tau", tau)
+                        # Both halves of a curve, always together: a time constant
+                        # left beside a stale ceiling names a different curve.
+                        setattr(
+                            word,
+                            f"{prefix}{suffix}_tau",
+                            None if curve is None else curve.tau,
+                        )
+                        setattr(
+                            word,
+                            f"{prefix}{suffix}_ceiling",
+                            None if curve is None else curve.ceiling,
+                        )
 
         out_queue.put(
             ("answered", card, practiced_at, next_ts, (current, success, failure))

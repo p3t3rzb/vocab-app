@@ -12,9 +12,9 @@ import torch.nn as nn
 
 from src.database import LanguagePairRepository, get_session
 
-from ..checkpoint import save_checkpoint
+from ..checkpoint import load_model, save_checkpoint
 from ..config import TrainConfig
-from ..curve import curve_recall
+from ..curve import ceiling, curve_recall
 from ..dataset import Sequence, build_sequences, split_sequences
 from ..device import get_device
 from ..lstm import RecallLSTM
@@ -34,6 +34,10 @@ def _predict(model: RecallLSTM, bx: torch.Tensor) -> torch.Tensor:
     at. ``bx[..., 1:]`` (the ``[prev_remembered, prev_not_remembered]`` one-hot
     plus the constant ``[is_forward, is_reverse]`` direction one-hot) is already
     history-aligned and copied through unshifted.
+
+    Both curve parameters come out of the same forward, so nothing extra is
+    passed here: one backward pass fits the time constant and the ceiling
+    together, each through the curve.
     """
     deltas = torch.expm1(bx[..., 0])  # (B, L) raw seconds since previous rep
 
@@ -132,9 +136,69 @@ class Trainer:
             print(f"\nTraining stopped early. Best val loss {best_val:.5f} at epoch {best_epoch + 1}")
         else:
             print(f"\nBest val loss {best_val:.5f} at epoch {best_epoch + 1}")
+        self._report_ceilings(ckpt_path, vl_inputs, vl_lengths)
         print(f"Checkpoint saved → {ckpt_path}")
 
         return ckpt_path
+
+    def _report_ceilings(
+        self,
+        ckpt_path: Path,
+        inputs: torch.Tensor,
+        lengths: torch.Tensor,
+    ) -> None:
+        """Print the saved model's fitted ceilings over the validation set.
+
+        The number worth seeing is whether the head actually learned the split it
+        was added for: mean ``p0`` after a remembered rep against after a lapse.
+        A run where those two come out equal has not used the channel, whatever
+        the loss did.
+
+        Reloads the *saved* checkpoint rather than reading the live model, since
+        the best epoch is generally not the last one. Runs in the same
+        length-bucketed batches training uses — the validation set as one tensor
+        is several GiB of LSTM activations.
+        """
+        model = load_model(ckpt_path, self._device)
+        totals = {True: (0.0, 0), False: (0.0, 0)}
+        lo, hi = 1.0, 0.0
+
+        with torch.inference_mode():
+            for bi in bucket_batches(lengths, self._cfg.batch_size, shuffle=False):
+                bl = lengths[bi]
+                max_l = int(bl.max().item())
+                bx = inputs[bi][:, :max_l, :]
+
+                # Same one-step roll as `_predict`: row i of the history carries
+                # the outcome of the rep that starts the curve emitted at step i.
+                x_hist = torch.empty_like(bx)
+                x_hist[:, 0, 0] = 0.0
+                x_hist[:, 1:, 0] = bx[:, :-1, 0]
+                x_hist[..., 1:] = bx[..., 1:]
+
+                p0 = ceiling(model(x_hist))
+                mask = torch.arange(max_l, device=self._device) < bl.unsqueeze(1)
+                if not bool(mask.any()):
+                    continue
+                lo = min(lo, float(p0[mask].min()))
+                hi = max(hi, float(p0[mask].max()))
+                for prev_ok in (True, False):
+                    sel = mask & (
+                        (x_hist[..., 1] > 0.5) if prev_ok else (x_hist[..., 1] <= 0.5)
+                    )
+                    n = int(sel.sum())
+                    if n:
+                        total, count = totals[prev_ok]
+                        totals[prev_ok] = (total + float(p0[sel].sum()), count + n)
+
+        def mean(prev_ok: bool) -> float:
+            total, count = totals[prev_ok]
+            return total / count if count else float("nan")
+
+        print(
+            f"Fitted ceiling p0 on val: after a remembered answer {mean(True):.4f}, "
+            f"after a forgotten one {mean(False):.4f} (range {lo:.4f}–{hi:.4f})"
+        )
 
     def _pair_name(self) -> str:
         """Resolve the ``<src>_<tgt>`` slug used in the checkpoint filename."""
@@ -154,7 +218,7 @@ class Trainer:
         """
         lengths = [len(s.inputs) for s in sequences]
         max_len = max(lengths)
-        n_features = sequences[0].inputs.shape[1] if sequences else 4
+        n_features = sequences[0].inputs.shape[1] if sequences else 5
         inputs = torch.zeros(len(sequences), max_len, n_features)
         targets = torch.zeros(len(sequences), max_len)
         for i, s in enumerate(sequences):

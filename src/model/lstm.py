@@ -1,7 +1,7 @@
 """The :class:`RecallLSTM` network definition.
 
 A small 2-layer LSTM that predicts, at each step in a repetition sequence, the
-*time constant of a forgetting curve* ``R(Δt) = exp(−Δt/τ)`` (see
+*time constant of a forgetting curve* ``R(Δt) = p0·exp(−Δt/τ)`` (see
 :mod:`src.model.curve`) rather than ``P(remembered)`` directly. Recall
 probability is obtained by evaluating that curve at the queried gap, and the
 next-review time is found by inverting the curve analytically.
@@ -14,7 +14,7 @@ raw output depends on past events alone.
 import torch
 import torch.nn as nn
 
-from .curve import LOG_TAU_INIT
+from .curve import CEILING_LOGIT_INIT, HEAD_OUTPUTS, LOG_TAU_INIT
 
 
 class RecallLSTM(nn.Module):
@@ -26,9 +26,25 @@ class RecallLSTM(nn.Module):
     successful (the history-only, gap-shifted input), and a one-hot encoding of
     the practice direction. Direction is constant across the sequence but
     supplied at every step so the LSTM can condition its dynamics on it without
-    relying on the initial state surviving long histories. The output is one raw
-    channel per step — ``ln(τ)``, turned into the time constant itself by
-    :mod:`src.model.curve` — biased at init to a three-day time constant.
+    relying on the initial state surviving long histories. The output is
+    :data:`~src.model.curve.HEAD_OUTPUTS` raw channels per step — ``ln τ`` and the
+    ceiling's logit, turned into the curve itself by :mod:`src.model.curve` —
+    biased at init to a three-day time constant under a ceiling of 0.98.
+
+    The curve's **ceiling** ``p0`` is the second channel, predicted per timestep
+    exactly like ``τ``. It is not an information channel the network lacked —
+    ``prev_remembered`` is already on every input row — but a degree of freedom:
+    ``τ`` sets how fast a curve falls and ``p0`` sets where it starts, and a
+    lapsed card differs from a recalled one almost entirely in *where it starts*.
+    With a fixed ceiling the network has to spend ``τ`` reaching a low level and
+    then cannot stop falling; see :mod:`src.model.curve` for the measurement.
+
+    Predicting it per cell rather than holding one or two deck-wide scalars costs
+    identification — a cell's ``p0`` and ``τ`` trade off against each other at any
+    single observed gap, and only the spread of gaps across the corpus separates
+    them — but the head's weights are shared across every timestep in the deck,
+    so what is fitted is a *function* of history, not a free parameter per card.
+    The same argument is what makes the per-cell ``τ`` work.
     """
 
     def __init__(
@@ -63,10 +79,13 @@ class RecallLSTM(nn.Module):
             batch_first=True,
         )
         self.drop = nn.Dropout(dropout)
-        self.head = nn.Linear(hidden_size, 1)
-        # The head emits ln(time constant in seconds); start it at three days so
+        self.head = nn.Linear(hidden_size, HEAD_OUTPUTS)
+        # Channel 0 emits ln(time constant in seconds); start it at three days so
         # the first forward already predicts on the scale real gaps have.
-        nn.init.constant_(self.head.bias, LOG_TAU_INIT)
+        # Channel 1 emits the ceiling's logit; start it just below 1 so an
+        # untrained model behaves like the ceiling-free curve it generalises.
+        nn.init.constant_(self.head.bias[0], LOG_TAU_INIT)
+        nn.init.constant_(self.head.bias[1], CEILING_LOGIT_INIT)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass.
@@ -75,10 +94,11 @@ class RecallLSTM(nn.Module):
             x: Padded history inputs of shape ``(B, L, input_size)``.
 
         Returns:
-            Raw curve parameter of shape ``(B, L, 1)``. The activation and the
-            curve evaluation live in :func:`src.model.curve.curve_recall`;
-            values at padded positions are undefined and must be masked by the
-            caller using the per-sequence lengths.
+            Raw curve parameters of shape ``(B, L, HEAD_OUTPUTS)`` —
+            ``[ln τ, ceiling logit]`` per step. The activations and the curve
+            evaluation live in :func:`src.model.curve.curve_recall`; values at
+            padded positions are undefined and must be masked by the caller using
+            the per-sequence lengths.
         """
         out, _ = self.lstm(x)
         out = self.drop(out)

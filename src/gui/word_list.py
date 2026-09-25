@@ -13,7 +13,13 @@ import time
 
 import customtkinter as ctk
 
-from src.database import Direction, RepetitionRepository, WordRepository, init_db, get_session
+from src.database import (
+    Direction,
+    RepetitionRepository,
+    WordRepository,
+    get_session,
+    init_db,
+)
 from src.database.models import Word
 from src.model.config import PredictConfig
 from src.model.curve import invert_curve
@@ -33,16 +39,21 @@ def _due_sort_key(ts: int | None) -> tuple[bool, int]:
 
 def _due_ts(
     tau: float | None,
+    p0: float | None,
     last: int | None,
     cfg: PredictConfig,
 ) -> int | None:
-    """Live next-review timestamp from the stored time constant, or ``None`` if unknown.
+    """Live next-review timestamp from the stored curve, or ``None`` if unknown.
 
-    ``None`` when the direction has no time constant (not yet computed) or no history.
+    ``None`` when the direction has no curve (not yet computed) or no history.
+    Both parameters are stored together, so a missing ``p0`` means a missing
+    curve rather than a ceiling to guess at.
     """
-    if tau is None or last is None:
+    if tau is None or p0 is None or last is None:
         return None
-    return last + int(invert_curve(tau, cfg.recall_threshold, cfg.max_delta_seconds))
+    return last + int(
+        invert_curve(tau, cfg.recall_threshold, cfg.max_delta_seconds, p0)
+    )
 
 
 def _build_due_cache(
@@ -50,12 +61,17 @@ def _build_due_cache(
     last_by_dir: dict[tuple[int, int], int],
     cfg: PredictConfig,
 ) -> dict[int, tuple[int | None, int | None]]:
-    """Compute every word's (fwd_due_ts, rev_due_ts) from stored time constants, once."""
+    """Compute every word's (fwd_due_ts, rev_due_ts) from stored curves, once.
+
+    Both curve parameters come off the word row, so this needs nothing from the
+    language pair and nothing about the last answer's outcome — the ceiling the
+    model predicted for that cell is already stored beside its time constant.
+    """
     fwd, rev = int(Direction.FORWARD), int(Direction.REVERSE)
     return {
         w.id: (
-            _due_ts(w.fwd_tau, last_by_dir.get((w.id, fwd)), cfg),
-            _due_ts(w.rev_tau, last_by_dir.get((w.id, rev)), cfg),
+            _due_ts(w.fwd_tau, w.fwd_ceiling, last_by_dir.get((w.id, fwd)), cfg),
+            _due_ts(w.rev_tau, w.rev_ceiling, last_by_dir.get((w.id, rev)), cfg),
         )
         for w in words
     }
@@ -202,9 +218,9 @@ class WordListScreen(BaseScreen):
     def _load_words(self) -> None:
         """Load every word from the database and re-render the treeview.
 
-        The per-direction due timestamps are derived from stored half-lives and
+        The per-direction due timestamps are derived from stored time constants and
         cached on the :class:`App`, so they're computed once per database (and
-        after half-lives/threshold change) rather than on every visit.
+        after time constants/threshold change) rather than on every visit.
         """
         with get_session() as session:
             self._all_words = WordRepository(session).get_all()

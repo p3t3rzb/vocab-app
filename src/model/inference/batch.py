@@ -1,6 +1,6 @@
 """Batched final-timestep forward, shared by the inference paths.
 
-Both the param scheduler (every word's stored time constant) and the expected-gain
+Both the param scheduler (every word's stored curve) and the expected-gain
 scoring need the same thing: run a pile of variable-length histories through the
 model and read off each one's *final* timestep. The read-off is indexed by each
 sequence's own length, so padded steps never leak into the result.
@@ -17,16 +17,16 @@ from __future__ import annotations
 
 import torch
 
-from ..curve import time_constant
+from ..curve import Curve, curve_from
 from ..lstm import RecallLSTM
 
 
-def final_step_time_constants(
+def final_step_curves(
     model: RecallLSTM,
     sequences: list[list[list[float]]],
     chunk_size: int | None = None,
-) -> list[float]:
-    """Forward every sequence and return its final timestep's time constant.
+) -> list[Curve]:
+    """Forward every sequence and return its final timestep's whole curve.
 
     Args:
         model: Trained network, already on its device and in ``eval`` mode.
@@ -36,8 +36,8 @@ def final_step_time_constants(
             batch — only safe when the caller has already chunked.
 
     Returns:
-        One time constant in seconds per input sequence, in the caller's original
-        order.
+        One :class:`~src.model.curve.Curve` per input sequence — both parameters
+        as the head emitted them together — in the caller's original order.
     """
     if not sequences:
         return []
@@ -45,7 +45,7 @@ def final_step_time_constants(
     device = next(model.parameters()).device
     step = chunk_size or len(sequences)
     n_features = len(sequences[0][0])
-    out: list[float | None] = [None] * len(sequences)
+    out: list[Curve | None] = [None] * len(sequences)
 
     # Length buckets: neighbours in this order pad to nearly the same length.
     order = sorted(range(len(sequences)), key=lambda i: len(sequences[i]))
@@ -63,12 +63,11 @@ def final_step_time_constants(
             )
 
         with torch.inference_mode():
-            raw = model(batch)  # (B, max_len, 1)
+            raw = model(batch)  # (B, max_len, HEAD_OUTPUTS)
 
         idx = torch.tensor([n - 1 for n in lengths], device=device)
-        raw_last = raw[torch.arange(len(picks), device=device), idx]  # (B, 1)
-        tau = time_constant(raw_last)  # (B,)
+        raw_last = raw[torch.arange(len(picks), device=device), idx]  # (B, HEAD_OUTPUTS)
         for pos, i in enumerate(picks):
-            out[i] = tau[pos].item()
+            out[i] = curve_from(raw_last[pos])
 
     return out  # type: ignore[return-value]

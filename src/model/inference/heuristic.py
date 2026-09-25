@@ -25,14 +25,15 @@ remembered / not-remembered grades:
   brings the card back later in the same session.
 
 **How that becomes a curve.** With the target interval ``I`` chosen above, the
-time constant is solved so the curve crosses the reference threshold ``θ`` exactly
-at ``I``::
+time constant is solved so the curve crosses the reference threshold ``θ`` exactly at
+``I``::
 
     θ = exp(−I/τ)   ⇒   τ = I / ln(1/θ)
 
-which is :func:`~src.model.curve.invert_curve` run backwards. The stored time
-constant therefore stays threshold-independent — the user's own recall threshold is applied
-live on top, as it is for a trained model.
+which is :func:`~src.model.curve.invert_curve` run backwards at this estimator's
+ceiling of 1. The stored time constant therefore stays threshold-independent —
+the user's own recall threshold is applied live on top, as it is for a trained
+model.
 """
 from __future__ import annotations
 
@@ -42,14 +43,19 @@ from src.database import Direction
 from src.database.models import Repetition
 
 from ..config import HeuristicConfig, PredictConfig
-from ..curve import invert_curve, recall_at
+from ..curve import NO_CEILING, Curve, invert_curve, recall_at
 
 
 class HeuristicPredictor:
     """SM-2-style stand-in for :class:`Predictor`, usable with no trained model.
 
-    Exposes the same ``config`` / ``time_constant`` / ``recall_probability`` /
-    ``next_repetition_delta`` surface, so callers can hold either one.
+    Exposes the same ``config`` / ``curve`` / ``recall_probability`` /
+    ``next_repetition_delta`` / ``post_rep_curves`` surface, so callers can hold
+    either one. Every curve it emits carries :data:`~src.model.curve.NO_CEILING`:
+    SM-2 has no notion of a review that fails immediately — it picks an interval
+    and the time constant is solved so the curve crosses the reference threshold
+    there — so the heuristic stays on the ceiling-free curve the trained model
+    generalises.
     """
 
     def __init__(
@@ -84,16 +90,20 @@ class HeuristicPredictor:
             streak += 1
         return streak
 
-    def time_constant(
+    def curve(
         self, reps: list[Repetition], direction: Direction | None = None
-    ) -> float:
-        """Return the curve time constant, in seconds, implied by this history.
+    ) -> Curve:
+        """Return the whole curve implied by this history.
+
+        The ceiling is always :data:`~src.model.curve.NO_CEILING`; only the time
+        constant carries the SM-2 ladder. It is returned in the pair anyway so
+        callers need not know which estimator they are holding.
 
         Args:
             reps: Repetition history for one (word, direction), oldest first.
                 Must be non-empty.
             direction: Accepted for signature-compatibility with
-                :meth:`Predictor.time_constant` and ignored — the history is already
+                :meth:`Predictor.curve` and ignored — the history is already
                 direction-specific, and the heuristic has no direction-dependent
                 behaviour to condition on.
 
@@ -124,7 +134,7 @@ class HeuristicPredictor:
             interval = min(interval, h.max_interval)
 
         # Solve τ so the curve crosses the reference threshold exactly at `interval`.
-        return interval / math.log(1.0 / h.reference_threshold)
+        return Curve(interval / math.log(1.0 / h.reference_threshold), NO_CEILING)
 
     def recall_probability(
         self,
@@ -133,27 +143,30 @@ class HeuristicPredictor:
         direction: Direction | None = None,
     ) -> float:
         """Return P(remembered) if tested ``delta_seconds`` after the last rep."""
-        return recall_at(self.time_constant(reps, direction), delta_seconds)
+        tau, p0 = self.curve(reps, direction)
+        return recall_at(tau, delta_seconds, p0)
 
     def next_repetition_delta(
         self, reps: list[Repetition], direction: Direction | None = None
     ) -> float:
         """Seconds until the next review, under the user's own recall threshold."""
+        tau, p0 = self.curve(reps, direction)
         return invert_curve(
-            self.time_constant(reps, direction),
+            tau,
             self._config.recall_threshold,
             self._config.max_delta_seconds,
+            p0,
         )
 
-    def post_rep_time_constants(
+    def post_rep_curves(
         self,
         histories: list[tuple[list[Repetition], Direction]],
         practiced_at: int,
         chunk_size: int | None = None,
-    ) -> list[tuple[float, float]]:
-        """Time constant each card's curve would take if it were answered now.
+    ) -> list[tuple[Curve, Curve]]:
+        """The curve each card would take if it were answered now.
 
-        The model-free counterpart of :meth:`Predictor.post_rep_time_constants`: it
+        The model-free counterpart of :meth:`Predictor.post_rep_curves`: it
         appends a hypothetical repetition at ``practiced_at`` to each history —
         once remembered, once forgotten — and re-runs the SM-2 rule.
 
@@ -168,17 +181,19 @@ class HeuristicPredictor:
                 hypothetical rep is then the whole history.
             practiced_at: Unix timestamp of the hypothetical repetition.
             chunk_size: Accepted for signature-compatibility with
-                :meth:`Predictor.post_rep_time_constants` and ignored — there is no
+                :meth:`Predictor.post_rep_curves` and ignored — there is no
                 batching to do without a model.
 
         Returns:
-            One ``(success_tau, failure_tau)`` per card, in the input order.
+            One ``(success_curve, failure_curve)`` per card, in the input order.
+            Both carry :data:`~src.model.curve.NO_CEILING`, so unlike a trained
+            model's the two branches differ only in their time constant.
         """
-        out: list[tuple[float, float]] = []
+        out: list[tuple[Curve, Curve]] = []
         for reps, direction in histories:
             word_id = reps[-1].word_id if reps else 0
-            taus = tuple(
-                self.time_constant(
+            curves = tuple(
+                self.curve(
                     reps
                     + [
                         Repetition(
@@ -192,5 +207,5 @@ class HeuristicPredictor:
                 )
                 for remembered in (True, False)
             )
-            out.append(taus)  # type: ignore[arg-type]
+            out.append(curves)  # type: ignore[arg-type]
         return out

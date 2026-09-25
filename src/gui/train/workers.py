@@ -74,7 +74,7 @@ def delete_model_worker(
 ) -> None:
     """Delete the checkpoint, then re-derive every word's params heuristically.
 
-    Removing the file alone would leave the stored half-lives as the deleted
+    Removing the file alone would leave the stored time constants as the deleted
     model computed them, so the app would keep scheduling from a model it no
     longer has. :func:`force_heuristic_params` rewrites the params of every
     word with history from :class:`HeuristicPredictor`, which is exactly what

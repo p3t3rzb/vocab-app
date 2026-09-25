@@ -24,6 +24,7 @@ from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
 
 from src.model import HeuristicPredictor
+from src.model.curve import Curve
 
 if TYPE_CHECKING:
     from src.model import RecallEstimator
@@ -318,9 +319,9 @@ class PracticeScreen(BaseScreen):
     def _has_estimator(self) -> bool:
         """Whether this session can score a card at all.
 
-        A gain is computed from the card's own stored half-lives
+        A gain is computed from the card's own stored time constants
         (:func:`~src.gui.practice.queue_model.card_gain`), so it needs no config —
-        but a pair with no estimator at all has no half-lives either, and such a
+        but a pair with no estimator at all has no time constants either, and such a
         session never re-scores or re-queues anything.
         """
         return self._predictor is not None
@@ -444,7 +445,7 @@ class PracticeScreen(BaseScreen):
         card: Card,
         practiced_at: int,
         next_ts: int | None,
-        curves: tuple[float | None, float | None, float | None],
+        curves: tuple[Curve | None, Curve | None, Curve | None],
     ) -> None:
         """Answer worker finished — show result and maybe re-queue the card."""
         self._answered_count += 1
@@ -455,7 +456,7 @@ class PracticeScreen(BaseScreen):
             # The session ran past midnight — start the day tally over.
             self._today_start = answer_day
             self._today_count = 1
-        # This word's stored half-lives just changed — the word list's cached
+        # This word's stored time constants just changed — the word list's cached
         # due times are now stale.
         self._app.invalidate_due_cache()
 
@@ -475,6 +476,8 @@ class PracticeScreen(BaseScreen):
                 target_text=card.target_text,
                 last_practiced=practiced_at,
                 score=0.0,
+                # Each curve carries the ceiling the model emitted beside it, so
+                # the refreshed card needs nothing further to be scoreable.
                 current=current,
                 success=success,
                 failure=failure,

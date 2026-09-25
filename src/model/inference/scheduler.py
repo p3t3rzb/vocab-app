@@ -2,7 +2,7 @@
 
 Words are processed in chunks of :attr:`ScheduleConfig.chunk_size`. Within each
 chunk every (word, direction) is forwarded through the model in a single batched
-call to get **three** curves' worth of time constant, all stored on the word:
+call to get **three** whole curves, all stored on the word:
 
 * the *current* curve, from the history as it stands — the one recall and the
   next-review time are derived from,
@@ -20,7 +20,11 @@ at ``NULL``. Such a card does not compete on gain: the queue trails it behind
 every learned card and orders it by a shuffle, so none of its curves is ever
 read. The ``NULL`` current curve is also what marks the card as new.
 
-Everything derived from these time constants — recall score, next-review time, queue
+Each curve is stored as **both** its parameters — the time constant and the
+ceiling the model emitted beside it — because a time constant only names a curve
+together with its ceiling. Whichever estimator runs writes its own pairs.
+
+Everything derived from these curves — recall score, next-review time, queue
 score — is computed *live* (see :mod:`src.model.curve`), so the recall threshold
 can change without recomputing anything here.
 """
@@ -39,16 +43,17 @@ from src.database.models import Repetition, Word
 
 from ..checkpoint import load_model
 from ..config import HeuristicConfig, ScheduleConfig
+from ..curve import Curve
 from ..features import history_rows, rep_row
 from ..lstm import RecallLSTM
-from .batch import final_step_time_constants
+from .batch import final_step_curves
 from .heuristic import HeuristicPredictor
 
 ProgressFn = Callable[[int, int], None]
 
-#: One direction's three time constants: ``(current, after_remembered, after_forgotten)``.
+#: One direction's three curves: ``(current, after_remembered, after_forgotten)``.
 #: ``current`` is ``None`` when that direction has no history yet.
-CardCurves = tuple[float | None, float, float]
+CardCurves = tuple[Curve | None, Curve, Curve]
 
 
 class ParamScheduler:
@@ -69,7 +74,15 @@ class ParamScheduler:
         on_progress: ProgressFn | None = None,
         stop_event: threading.Event | None = None,
     ) -> None:
-        """Compute and persist the per-direction curve time constants for every word."""
+        """Compute and persist the per-direction curve time constants for every word.
+
+        A cancelled pass leaves a mix of freshly-computed and stale curves, but
+        each *row* is written whole — both parameters of all three curves in one
+        statement — so no card is ever left with a time constant beside another
+        curve's ceiling. That was the reason the deck-wide ceilings had to be
+        written before the time constants; predicting the ceiling per cell
+        removes the ordering problem instead of solving it.
+        """
         with get_session() as session:
             all_words = list(session.scalars(select(Word).order_by(Word.id)))
             all_reps = list(
@@ -141,18 +154,18 @@ class ParamScheduler:
                 slots.append((key, 2))
                 sequences.append(rows + [rep_row(gap, False, direction)])
 
-        by_key: dict[tuple[int, int], list[float | None]] = defaultdict(
+        by_key: dict[tuple[int, int], list[Curve | None]] = defaultdict(
             lambda: [None, None, None]
         )
-        for (key, which), tau in zip(
+        for (key, which), curve in zip(
             slots,
-            final_step_time_constants(
+            final_step_curves(
                 self._model,
                 sequences,
                 chunk_size=self._schedule_cfg.batch_sequences,
             ),
         ):
-            by_key[key][which] = tau
+            by_key[key][which] = curve
 
         def curves(key: tuple[int, int]) -> CardCurves:
             current, ok, no = by_key[key]
@@ -170,16 +183,19 @@ class ParamScheduler:
 
 
 def _column_values(prefix: str, curves: CardCurves) -> dict[str, float | None]:
-    """Flatten one direction's three time constants into its three ``words`` columns.
+    """Flatten one direction's three curves into its six ``words`` columns.
 
     ``prefix`` is ``"fwd"`` or ``"rev"``; the current curve takes the bare
-    ``<prefix>_tau`` name and the two hypothetical ones the ``_ok`` / ``_no``
-    variants. A ``None`` curve leaves its column at SQL ``NULL``.
+    ``<prefix>_tau`` / ``<prefix>_ceiling`` names and the two hypothetical ones the
+    ``_ok`` / ``_no`` variants. A ``None`` curve leaves both its columns at SQL
+    ``NULL`` — never one of the two, which would be a curve with half a
+    definition.
     """
-    return {
-        f"{prefix}{suffix}_tau": tau
-        for suffix, tau in zip(("", "_ok", "_no"), curves)
-    }
+    values: dict[str, float | None] = {}
+    for suffix, curve in zip(("", "_ok", "_no"), curves):
+        values[f"{prefix}{suffix}_tau"] = None if curve is None else curve.tau
+        values[f"{prefix}{suffix}_ceiling"] = None if curve is None else curve.ceiling
+    return values
 
 
 def _persist_params(
@@ -208,7 +224,7 @@ def backfill_heuristic_params(
     The model-free counterpart of :func:`compute_all_params`, for a language pair
     that has no checkpoint yet: it runs :class:`HeuristicPredictor` over every
     (word, direction) and persists the resulting current and post-review
-    half-lives. Without it, repetitions recorded before a pair had any estimator
+    time constants. Without it, repetitions recorded before a pair had any estimator
     would sit at ``NULL`` — practised, but unscheduled and rendered "–" in the
     word list — until each was answered once more.
 
@@ -216,11 +232,15 @@ def backfill_heuristic_params(
     practice queue orders a never-practised card by a shuffle, not by a gain, so
     it never reads them.
 
+    Every ceiling written here is :data:`~src.model.curve.NO_CEILING`, since SM-2
+    fits none — which also clears whatever a since-deleted model had fitted, so no
+    heuristic time constant is ever read under a model's ceiling.
+
     Args:
         heuristic_cfg: Override the default :class:`HeuristicConfig`.
 
     Returns:
-        The number of words whose half-lives were written.
+        The number of words whose time constants were written.
     """
     predictor = HeuristicPredictor(heuristic_config=heuristic_cfg)
 
@@ -247,8 +267,8 @@ def backfill_heuristic_params(
             if not reps:
                 per_direction.append((None, None, None))
                 continue
-            current = predictor.time_constant(reps, direction)
-            ok, no = predictor.post_rep_time_constants([(reps, direction)], now)[0]
+            current = predictor.curve(reps, direction)
+            ok, no = predictor.post_rep_curves([(reps, direction)], now)[0]
             per_direction.append((current, ok, no))
         updates[word_id] = (per_direction[0], per_direction[1])
 

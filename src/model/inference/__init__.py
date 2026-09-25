@@ -7,8 +7,8 @@ from .scheduler import (
     compute_all_params,
 )
 
-#: Either estimator — both emit the same curve time constant, so callers that just
-#: read it can hold one without caring which produced it.
+#: Either estimator — both emit the same :class:`~src.model.curve.Curve`, so
+#: callers that just read it can hold one without caring which produced it.
 RecallEstimator = Predictor | HeuristicPredictor
 
 __all__ = [
