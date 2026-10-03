@@ -183,6 +183,10 @@ class WordListScreen(BaseScreen):
         tgt3 = self._ctx.tgt_lang[:3]
         columns = (
             ColumnSpec(
+                "priority", "★", 36, 36, anchor="center",
+                sort_key=lambda w: not w.priority,  # priority words first
+            ),
+            ColumnSpec(
                 "source", self._ctx.src_lang, 240, 100,
                 sort_key=lambda w: w.source_text.lower(),
             ),
@@ -279,6 +283,7 @@ class WordListScreen(BaseScreen):
             self._tree.insert(
                 "", "end",
                 values=(
+                    "★" if word.priority else "",
                     word.source_text,
                     word.target_text,
                     format_due(fwd_due),

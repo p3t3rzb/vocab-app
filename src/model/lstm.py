@@ -14,7 +14,7 @@ raw output depends on past events alone.
 import torch
 import torch.nn as nn
 
-from .curve import CEILING_LOGIT_INIT, HEAD_OUTPUTS, LOG_TAU_INIT
+from .curve import CEILING_LOGIT_INIT, CEILING_LOGIT_MAX, HEAD_OUTPUTS, LOG_TAU_INIT
 
 
 class RecallLSTM(nn.Module):
@@ -53,6 +53,7 @@ class RecallLSTM(nn.Module):
         num_layers: int = 2,
         dropout: float = 0.2,
         input_size: int = 5,
+        fixed_ceiling: bool = False,
     ):
         """Build the network.
 
@@ -64,12 +65,17 @@ class RecallLSTM(nn.Module):
             input_size: Number of input features per timestep. Recorded in the
                 checkpoint so older models with a different feature count are
                 rebuilt correctly on load.
+            fixed_ceiling: Pin the ceiling at 1 instead of learning it — the
+                ceiling channel is overwritten with :data:`CEILING_LOGIT_MAX`
+                in :meth:`forward`, so the curve is ``exp(−Δt/τ)`` in training
+                and inference alike. Recorded in the checkpoint.
         """
         super().__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.dropout = dropout
         self.input_size = input_size
+        self.fixed_ceiling = fixed_ceiling
 
         self.lstm = nn.LSTM(
             input_size=input_size,
@@ -102,7 +108,11 @@ class RecallLSTM(nn.Module):
         """
         out, _ = self.lstm(x)
         out = self.drop(out)
-        return self.head(out)
+        raw = self.head(out)
+        if self.fixed_ceiling:
+            log_tau = raw[..., :1]
+            raw = torch.cat([log_tau, torch.full_like(log_tau, CEILING_LOGIT_MAX)], dim=-1)
+        return raw
 
     def hyperparams(self) -> dict:
         """Return the constructor kwargs needed to rebuild this network.
@@ -115,4 +125,5 @@ class RecallLSTM(nn.Module):
             "num_layers": self.num_layers,
             "dropout": self.dropout,
             "input_size": self.input_size,
+            "fixed_ceiling": self.fixed_ceiling,
         }

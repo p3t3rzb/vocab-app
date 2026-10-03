@@ -1,5 +1,5 @@
 """Word model — one vocabulary entry plus per-direction forgetting-curve time constants."""
-from sqlalchemy import Float, Integer, Text
+from sqlalchemy import Boolean, Float, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import BaseORM
@@ -42,6 +42,9 @@ class Word(BaseORM):
         fwd_ok_tau / fwd_ok_ceiling, fwd_no_tau / fwd_no_ceiling: the FORWARD curve after a
             hypothetical remembered / forgotten answer.
         rev_ok_tau / rev_ok_ceiling, rev_no_tau / rev_no_ceiling: the same for REVERSE.
+        priority: Whether the word belongs to the user's priority subset. The
+            practice queue serves priority words — both their due reviews and
+            their introduction as new words — ahead of every other word.
         repetitions: All practice events for this word, in any direction.
             Cascades on delete so removing a Word also removes its history.
     """
@@ -64,6 +67,10 @@ class Word(BaseORM):
     fwd_no_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     rev_ok_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     rev_no_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+
+    priority: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
 
     repetitions: Mapped[list[Repetition]] = relationship(
         back_populates="word",

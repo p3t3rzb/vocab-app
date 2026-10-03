@@ -112,6 +112,12 @@ class TrainScreen(BaseScreen):
         self._epochs_entry = ctk.CTkEntry(ctrl, textvariable=self._epochs_var, width=60)
         self._epochs_entry.pack(side="left", padx=(0, 20))
 
+        self._fixed_ceiling_var = ctk.BooleanVar(value=False)
+        self._fixed_ceiling_check = ctk.CTkCheckBox(
+            ctrl, text="Fix p0 = 1", variable=self._fixed_ceiling_var,
+        )
+        self._fixed_ceiling_check.pack(side="left", padx=(0, 20))
+
         self._btn_train = ctk.CTkButton(
             ctrl, text="Train", width=100, command=self._start_training,
         )
@@ -169,12 +175,13 @@ class TrainScreen(BaseScreen):
 
         self._btn_train.configure(state="disabled")
         self._epochs_entry.configure(state="disabled")
+        self._fixed_ceiling_check.configure(state="disabled")
         self._btn_delete.configure(state="disabled")
         self._btn_cancel.configure(state="normal")
         self._status_var.set("Starting training…")
         self._progress.start()
 
-        cfg = TrainConfig(epochs=epochs)
+        cfg = TrainConfig(epochs=epochs, fixed_ceiling=self._fixed_ceiling_var.get())
         self._train_job.start(
             training_worker,
             self._ctx.db_url,
@@ -267,6 +274,7 @@ class TrainScreen(BaseScreen):
 
         self._btn_train.configure(state="disabled")
         self._epochs_entry.configure(state="disabled")
+        self._fixed_ceiling_check.configure(state="disabled")
         self._btn_delete.configure(state="disabled")
         self._status_var.set("Deleting model and recomputing with the heuristic…")
         self._progress.configure(mode="indeterminate")
@@ -306,6 +314,7 @@ class TrainScreen(BaseScreen):
         self._progress.set(1.0 if success else 0)
         self._btn_train.configure(state="normal")
         self._epochs_entry.configure(state="normal")
+        self._fixed_ceiling_check.configure(state="normal")
         self._btn_cancel.configure(state="disabled")
         self._refresh_delete_button()
         self._status_var.set(message)

@@ -19,7 +19,15 @@ from ..base_screen import BaseScreen
 from ..formatting import day_start, format_future, format_past
 from ..theme import Fonts, Hints, PollIntervals, Spacing
 from ..widgets import build_header
-from .queue_model import ERROR_PRIORITY, Card, PracticeQueue, card_gain, drain_waiting
+from .queue_model import (
+    ERROR_PRIORITY,
+    TIER_EXTRA,
+    Card,
+    PracticeQueue,
+    card_gain,
+    drain_waiting,
+    review_tier,
+)
 from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
 
@@ -346,7 +354,7 @@ class PracticeScreen(BaseScreen):
                 continue
             if can_score:
                 card.score = card_gain(card, now)
-            self._queue.push(card, -card.score)
+            self._queue.push(card, -card.score, review_tier(card))
 
     def _show_current(self) -> None:
         """Pop and render the next-most-urgent card, or transition to DONE when empty."""
@@ -476,6 +484,7 @@ class PracticeScreen(BaseScreen):
                 target_text=card.target_text,
                 last_practiced=practiced_at,
                 score=0.0,
+                priority=card.priority,
                 # Each curve carries the ceiling the model emitted beside it, so
                 # the refreshed card needs nothing further to be scoreable.
                 current=current,
@@ -486,14 +495,14 @@ class PracticeScreen(BaseScreen):
             if success is None or failure is None or not self._has_estimator():
                 # Nothing to score the card from — send it to the back rather than
                 # the front.
-                self._queue.push(refreshed, ERROR_PRIORITY)
+                self._queue.push(refreshed, ERROR_PRIORITY, TIER_EXTRA)
             elif next_ts <= now:
                 # Still due right after this attempt — re-queue at its
                 # score-sorted position so it returns later in the session. It is
                 # re-scored again if it waits, so this score only has to order it
                 # against the queue as it stands now.
                 refreshed.score = card_gain(refreshed, now)
-                self._queue.push(refreshed, -refreshed.score)
+                self._queue.push(refreshed, -refreshed.score, review_tier(refreshed))
             else:
                 # Due in the future — park it in the waiting heap so it can be
                 # promoted back if it comes due before the session ends.

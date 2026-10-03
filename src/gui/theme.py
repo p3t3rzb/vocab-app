@@ -50,7 +50,7 @@ class WindowSizes:
     # Wait this long after the last resize event before rescaling.
     RESCALE_DEBOUNCE_MS = 80
     NEW_DB_DIALOG = "420x260"
-    WORD_EDIT_DIALOG = "440x220"
+    WORD_EDIT_DIALOG = "440x260"
 
 
 class PollIntervals:

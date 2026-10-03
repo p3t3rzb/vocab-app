@@ -16,11 +16,19 @@ in directional pairs — both directions of a word back to back, and words with
 only one direction left new ahead of brand-new pairs — so a word is finished
 rather than half-learned.
 
+Words flagged as **priority** come first. The heap is keyed by a *tier* before
+the score, so a session runs: due priority reviews, new priority words, due
+ordinary reviews, new ordinary words — each by its own key within the tier. A
+priority word is thus brought back above the threshold, and then introduced,
+before anything else is touched.
+
 Once even those run out the session need not end: :func:`drain_waiting` folds
 the not-yet-due cards into the main queue on the same expected-gain key, so
 practice simply continues with whichever card the next review would help most.
 The threshold, which until then decided *whether* a card is served, drops out;
-the ordering does not change, because it never depended on it.
+the ordering does not change, because it never depended on it. The folded-in
+cards share one last tier regardless of priority, so a card that comes due
+again meanwhile is still served ahead of them.
 
 Ordering on the gain rather than on current recall matters for a second reason:
 worst-recalled-first always reviews weak cards immediately, which locks difficulty
@@ -49,16 +57,22 @@ from src.model.curve import Curve, expected_gain, invert_curve, recall_at
 # them rescored. A random offset in [0, 1) shuffles them among themselves.
 _UNSCORED_PRIORITY = -1e18
 
-#: Priority floor for never-practised ("new") cards: always after any learned
-#: card, whose priority is a negated gain in seconds and so bounded by the deck's
-#: longest time constant (~1e8). Each new card sits at this base plus its own offset,
-#: which is why the base stays at 1e15: float64 still resolves a 0.5 step there.
-_NEW_PRIORITY_BASE = 1e15
-
 #: The opposite end of the heap, for a card the session could not score at all
 #: (the answer worker hit an error). A plain ``0.0`` score no longer means "last"
 #: now that a gain can be negative, so this is spelled out separately.
 ERROR_PRIORITY = -_UNSCORED_PRIORITY
+
+#: Heap tiers, compared before the priority key: every card in a lower tier is
+#: served before any card in a higher one. Learned cards (due or unscored) sit in
+#: a review tier, never-practised ones in a new tier, each split by the word's
+#: priority flag.
+TIER_PRIORITY_REVIEW = 0
+TIER_PRIORITY_NEW = 1
+TIER_REVIEW = 2
+TIER_NEW = 3
+#: The extra-practice pool (:func:`drain_waiting`) and cards the session could not
+#: score — behind everything, so a card that comes due is still served first.
+TIER_EXTRA = 4
 
 
 @dataclass(slots=True)
@@ -73,6 +87,8 @@ class Card:
     #: Expected retained seconds a review right now would add. The heap is keyed
     #: by its negation, so higher is practiced sooner.
     score: float
+    #: Whether the word is in the priority subset, which decides its heap tier.
+    priority: bool
     #: The direction's three stored curves, each a time constant with the ceiling
     #: the model predicted beside it: the present curve (``None`` when the card has
     #: never been practised in this direction) and those of the two a remembered /
@@ -101,36 +117,42 @@ class Card:
 
 
 class PracticeQueue:
-    """Min-heap of cards ordered by priority (lower = practiced first).
+    """Min-heap of cards ordered by tier, then priority (lower = practiced first).
 
     Wraps :mod:`heapq` so both :meth:`push` and :meth:`pop` are ``O(log N)``.
-    Heap entries are ``(priority, seq, card)``; the monotonic ``seq`` counter
-    breaks ties so :class:`Card` instances are never compared directly.
+    Heap entries are ``(tier, priority, seq, card)``; the monotonic ``seq``
+    counter breaks ties so :class:`Card` instances are never compared directly.
+    The waiting heap leaves every card at tier 0, so it is keyed by due time alone.
     """
 
     def __init__(self) -> None:
-        self._heap: list[tuple[float, int, Card]] = []
+        self._heap: list[tuple[int, float, int, Card]] = []
         self._seq = 0
 
-    def push(self, card: Card, priority: float) -> None:
-        """Insert ``card`` with the given priority (lower is more urgent)."""
-        heapq.heappush(self._heap, (priority, self._seq, card))
+    def push(self, card: Card, priority: float, tier: int = 0) -> None:
+        """Insert ``card`` with the given tier and priority (lower is more urgent)."""
+        heapq.heappush(self._heap, (tier, priority, self._seq, card))
         self._seq += 1
 
     def pop(self) -> Card | None:
         """Remove and return the lowest-priority card, or ``None`` if empty."""
         if not self._heap:
             return None
-        return heapq.heappop(self._heap)[2]
+        return heapq.heappop(self._heap)[3]
 
     def peek_priority(self) -> float | None:
         """Return the smallest priority without popping, or ``None`` if empty."""
         if not self._heap:
             return None
-        return self._heap[0][0]
+        return self._heap[0][1]
 
     def __len__(self) -> int:
         return len(self._heap)
+
+
+def review_tier(card: Card) -> int:
+    """Heap tier for a learned ``card`` that is due: priority words go first."""
+    return TIER_PRIORITY_REVIEW if card.priority else TIER_REVIEW
 
 
 def _curve(word, direction: Direction, suffix: str) -> Curve | None:
@@ -228,7 +250,7 @@ def drain_waiting(queue: PracticeQueue, waiting: PracticeQueue, now: int) -> int
         if card is None:
             return moved
         card.score = card_gain(card, now)
-        queue.push(card, -card.score)
+        queue.push(card, -card.score, TIER_EXTRA)
         moved += 1
 
 
@@ -244,22 +266,27 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
 
     For each (word, direction):
 
-    * **New** (never practiced in that direction) → main queue at
-      :data:`_NEW_PRIORITY_BASE`, i.e. behind every learned card, so new words are
-      only met once everything learned is above the threshold. New cards are
+    * **New** (never practiced in that direction) → main queue in a new tier,
+      i.e. behind every learned card of the same priority, so new words are only
+      met once everything learned at that priority is above the threshold. New cards are
       grouped per word and shuffled as pairs, so both directions of a freshly-seen
       word appear back to back (in random order within the pair). Words whose
       *other* direction was already learned (only one new direction left) come
       first, so a half-learned word is finished before brand-new pairs are
       introduced.
-    * **Due** (``recall ≤ threshold``) → main queue at ``−score``. The threshold
+    * **Due** (``recall ≤ threshold``) → main queue at ``−score`` in its review
+      tier (:func:`review_tier`). The threshold
       only gates *whether* a card is served, never the order the served ones come
       in.
     * **Not due** (``recall > threshold``) → waiting queue keyed by its due
       timestamp ``last + invert_curve(...)``, always ``> now``.
     * **Unscored** (curves not computed yet, i.e. history recorded with no
-      estimator) → main queue at :data:`_UNSCORED_PRIORITY`, i.e. first, so they
-      get rescored on answer.
+      estimator) → main queue at :data:`_UNSCORED_PRIORITY`, i.e. first within
+      their review tier, so they get rescored on answer.
+
+    Priority words fill tiers ahead of ordinary ones (see the ``TIER_*``
+    constants): due priority reviews, then new priority words, then due ordinary
+    reviews, then new ordinary words.
 
     Every learned card carries the curves it was scored from, so the session can
     re-score it with :func:`card_gain` at the moment it is actually served.
@@ -272,6 +299,7 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     queue = PracticeQueue()
     waiting = PracticeQueue()
     new_by_word: dict[int, list[Card]] = {}
+    new_priority_by_word: dict[int, list[Card]] = {}
     with get_session() as session:
         words = WordRepository(session).get_all()
         last_by_dir = RepetitionRepository(session).latest_practiced_at_by_word_direction()
@@ -288,6 +316,7 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
                 target_text=word.target_text,
                 last_practiced=last,
                 score=0.0,
+                priority=word.priority,
                 current=current,
                 success=_curve(word, direction, "_ok"),
                 failure=_curve(word, direction, "_no"),
@@ -296,18 +325,19 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
             if last is None:
                 # Never practiced in this direction — trails all learned cards.
                 # Collect per word so both directions can be kept together.
-                new_by_word.setdefault(word.id, []).append(card)
+                new = new_priority_by_word if word.priority else new_by_word
+                new.setdefault(word.id, []).append(card)
                 continue
 
             if current is None or card.success is None or card.failure is None:
                 # Practiced, but without the curves to score it from.
-                queue.push(card, _UNSCORED_PRIORITY + random.random())
+                queue.push(card, _UNSCORED_PRIORITY + random.random(), review_tier(card))
                 continue
 
             card.score = card_gain(card, now)
 
             if recall_at(current.tau, now - last, current.ceiling) <= cfg.recall_threshold:
-                queue.push(card, -card.score)
+                queue.push(card, -card.score, review_tier(card))
             else:
                 # Not due yet — park it in the waiting heap keyed by due time.
                 due_ts = last + int(
@@ -320,12 +350,23 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
                 )
                 waiting.push(card, due_ts)
 
-    # Emit new cards last, after every learned card. A single-card bucket means
-    # the word's other direction already has history (learned in an earlier
-    # session), so finish that half-learned word before meeting brand-new pairs:
-    # order the single-card buckets ahead of the two-card ones. Shuffle within
-    # each group (randomizes order) and push each bucket's cards contiguously with
-    # an increasing base so both directions of a word land back to back.
+    _push_new(queue, new_priority_by_word, TIER_PRIORITY_NEW)
+    _push_new(queue, new_by_word, TIER_NEW)
+
+    return queue, waiting
+
+
+def _push_new(queue: PracticeQueue, new_by_word: dict[int, list[Card]], tier: int) -> None:
+    """Push one priority group's new cards into ``tier``, word by word.
+
+    The tier puts them after every learned card of their priority. A single-card
+    bucket means the word's other direction already has history (learned in an
+    earlier session), so finish that half-learned word before meeting brand-new
+    pairs: order the single-card buckets ahead of the two-card ones. Shuffle
+    within each group (randomizes order) and push each bucket's cards
+    contiguously with an increasing key so both directions of a word land back
+    to back.
+    """
     buckets = list(new_by_word.values())
     partial = [b for b in buckets if len(b) == 1]  # other direction already learned
     pairs = [b for b in buckets if len(b) != 1]     # both directions still new
@@ -334,6 +375,4 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     for i, cards in enumerate(partial + pairs):
         random.shuffle(cards)  # random direction order within the pair
         for j, card in enumerate(cards):
-            queue.push(card, _NEW_PRIORITY_BASE + i + j * 0.5)
-
-    return queue, waiting
+            queue.push(card, i + j * 0.5, tier)

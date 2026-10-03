@@ -34,6 +34,8 @@ class TrainConfig:
             optimizer step (``torch.nn.utils.clip_grad_norm_``).
         weight_decay: L2 regularization strength passed to the Adam
             optimizer (``0.0`` disables it).
+        fixed_ceiling: Pin the curve's ceiling ``p0`` at 1 instead of
+            learning it, i.e. train the single-parameter ``exp(−Δt/τ)`` curve.
     """
 
     epochs: int = 100
@@ -49,6 +51,7 @@ class TrainConfig:
     lr_factor: float = 0.5
     grad_clip_max_norm: float = 1.0
     weight_decay: float = 0.0
+    fixed_ceiling: bool = False
 
 
 @dataclass

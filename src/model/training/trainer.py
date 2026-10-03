@@ -96,6 +96,7 @@ class Trainer:
             hidden_size=cfg.hidden_size,
             num_layers=cfg.num_layers,
             dropout=cfg.dropout,
+            fixed_ceiling=cfg.fixed_ceiling,
         ).to(self._device)
         ckpt_path = cfg.checkpoint_dir / f"{pair_name}.pt"
         best_val = math.inf
