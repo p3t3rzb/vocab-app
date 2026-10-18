@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import random
 import threading
+from datetime import datetime
 from collections.abc import Callable
 from pathlib import Path
 
@@ -15,13 +16,14 @@ from src.database import LanguagePairRepository, get_session
 from ..checkpoint import load_model, save_checkpoint
 from ..config import TrainConfig
 from ..curve import ceiling, curve_recall
-from ..dataset import Sequence, build_sequences, split_sequences
-from ..device import get_device
+from ..dataset import Sequence, build_sequences, split_by_time
 from ..lstm import RecallLSTM
 from .batching import bucket_batches
 from .loss import masked_bce
 
 EpochCallback = Callable[[int, float, float], None]
+#: ``(epoch, total_epochs, train_loss)`` for each epoch of the final refit.
+RefitCallback = Callable[[int, int, float], None]
 
 
 def _predict(model: RecallLSTM, bx: torch.Tensor) -> torch.Tensor:
@@ -49,19 +51,29 @@ def _predict(model: RecallLSTM, bx: torch.Tensor) -> torch.Tensor:
     return curve_recall(deltas, model(x_hist))
 
 
+def _step_mask(lengths: torch.Tensor, starts: torch.Tensor, max_l: int) -> torch.Tensor:
+    """``(B, max_l)`` mask of the scored steps: from each ``start`` up to its length."""
+    steps = torch.arange(max_l, device=lengths.device).unsqueeze(0)
+    return (steps < lengths.unsqueeze(1)) & (steps >= starts.unsqueeze(1))
+
+
 class Trainer:
     """Encapsulates one training run: data prep, model, optimizer, epoch loop."""
 
     def __init__(self, config: TrainConfig) -> None:
         self._cfg = config
-        self._device = get_device()
+        # CPU, not get_device(): the MPS LSTM backward intermittently returns
+        # garbage gradients (NaN / ~1e8) on the full deck, which poisons the
+        # weights. Inference is forward-only and stays on MPS.
+        self._device = torch.device("cpu")
 
     def run(
         self,
         on_epoch: EpochCallback | None = None,
         stop_event: threading.Event | None = None,
+        on_refit_epoch: RefitCallback | None = None,
     ) -> Path:
-        """Train and return the path of the best checkpoint.
+        """Train and return the path of the checkpoint.
 
         Callers must call :func:`src.database.init_db` before invoking this
         method — the trainer reads sequences via :func:`get_session` and
@@ -70,14 +82,19 @@ class Trainer:
         Every run starts from a fresh random init — an existing checkpoint for
         this language pair is never resumed from, only overwritten.
 
-        The best checkpoint (lowest validation loss seen so far) is saved
-        every time validation loss improves, so cancelling mid-training still
-        leaves a usable model on disk.
+        Two phases. The **validation run** trains on the reps before the time
+        cutoff and scores each epoch on the ones after it, to find the best epoch
+        and the learning rates that led there. The **refit** (:meth:`_refit`)
+        then trains a fresh model on *every* rep for that many epochs, replaying
+        those learning rates, and overwrites the checkpoint — so the shipped
+        model has seen the most recent reps and newest words, which the
+        validation run had to hold out.
+
+        The best validation-run checkpoint is saved every time validation loss
+        improves, so cancelling at any point — the refit included — still leaves
+        a usable model on disk.
         """
         cfg = self._cfg
-        torch.manual_seed(cfg.seed)
-        random.seed(cfg.seed)
-
         print(f"Device: {self._device}")
 
         print("Loading sequences from database…")
@@ -85,26 +102,26 @@ class Trainer:
         print(f"  {len(all_seqs)} (word, direction) sequences found")
 
         pair_name = self._pair_name()
-        train_seqs, val_seqs = split_sequences(all_seqs, cfg.val_split, cfg.seed)
-        print(f"  Train: {len(train_seqs)}  |  Val: {len(val_seqs)}")
+        train_seqs, val_seqs = split_by_time(all_seqs, cfg.val_split)
+        n_val = sum(len(s.targets) - s.scored_from for s in val_seqs)
+        cutoff = min(int(s.practiced_at[s.scored_from]) for s in val_seqs)
+        latest = max(int(s.practiced_at[-1]) for s in val_seqs)
+        print(
+            f"  Train: {len(train_seqs)}  |  Val: {len(val_seqs)} sequences, "
+            f"{n_val} reps since {datetime.fromtimestamp(cutoff):%Y-%m-%d} "
+            f"(last {(latest - cutoff) / 86_400:.1f} days)"
+        )
 
         print("Pre-loading data to device…")
-        tr_inputs, tr_targets, tr_lengths = self._preload(train_seqs)
-        vl_inputs, vl_targets, vl_lengths = self._preload(val_seqs)
+        tr_inputs, tr_targets, tr_lengths, tr_starts = self._preload(train_seqs)
+        vl_inputs, vl_targets, vl_lengths, vl_starts = self._preload(val_seqs)
 
-        model = RecallLSTM(
-            hidden_size=cfg.hidden_size,
-            num_layers=cfg.num_layers,
-            dropout=cfg.dropout,
-            fixed_ceiling=cfg.fixed_ceiling,
-        ).to(self._device)
+        model, optimizer = self._fresh_model()
         ckpt_path = cfg.checkpoint_dir / f"{pair_name}.pt"
         best_val = math.inf
         best_epoch = 0
+        lrs: list[float] = []  # learning rate each epoch trained at, for the refit
 
-        optimizer = torch.optim.Adam(
-            model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
-        )
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, patience=cfg.lr_patience, factor=cfg.lr_factor,
         )
@@ -116,8 +133,13 @@ class Trainer:
             if stop_event is not None and stop_event.is_set():
                 break
 
-            tr_loss = self._run_epoch(model, tr_inputs, tr_targets, tr_lengths, optimizer)
-            vl_loss = self._run_epoch(model, vl_inputs, vl_targets, vl_lengths, None)
+            lrs.append(optimizer.param_groups[0]["lr"])
+            tr_loss = self._run_epoch(
+                model, tr_inputs, tr_targets, tr_lengths, tr_starts, optimizer,
+            )
+            vl_loss = self._run_epoch(
+                model, vl_inputs, vl_targets, vl_lengths, vl_starts, None,
+            )
             scheduler.step(vl_loss)
 
             lr_now = optimizer.param_groups[0]["lr"]
@@ -137,18 +159,86 @@ class Trainer:
             print(f"\nTraining stopped early. Best val loss {best_val:.5f} at epoch {best_epoch + 1}")
         else:
             print(f"\nBest val loss {best_val:.5f} at epoch {best_epoch + 1}")
-        self._report_ceilings(ckpt_path, vl_inputs, vl_lengths)
+        self._report_ceilings(ckpt_path, vl_inputs, vl_lengths, vl_starts)
+
+        if not stopped_early and lrs:
+            # Free the split's device copies before loading the whole dataset.
+            del tr_inputs, tr_targets, tr_lengths, tr_starts
+            del vl_inputs, vl_targets, vl_lengths, vl_starts
+            self._refit(
+                all_seqs, lrs[: best_epoch + 1], ckpt_path, best_val, best_epoch,
+                on_refit_epoch, stop_event,
+            )
         print(f"Checkpoint saved → {ckpt_path}")
 
         return ckpt_path
+
+    def _fresh_model(self) -> tuple[RecallLSTM, torch.optim.Optimizer]:
+        """A newly initialised model and its optimizer, seeded from the config.
+
+        Re-seeding here makes the refit start from the same weights and batch
+        order the validation run started from, so the two differ only in data.
+        """
+        cfg = self._cfg
+        torch.manual_seed(cfg.seed)
+        random.seed(cfg.seed)
+        model = RecallLSTM(
+            hidden_size=cfg.hidden_size,
+            num_layers=cfg.num_layers,
+            dropout=cfg.dropout,
+            fixed_ceiling=cfg.fixed_ceiling,
+        ).to(self._device)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
+        )
+        return model, optimizer
+
+    def _refit(
+        self,
+        sequences: list[Sequence],
+        lrs: list[float],
+        ckpt_path: Path,
+        val_loss: float,
+        best_epoch: int,
+        on_epoch: RefitCallback | None,
+        stop_event: threading.Event | None,
+    ) -> None:
+        """Retrain from scratch on every rep and overwrite the checkpoint.
+
+        Runs one epoch per entry of ``lrs`` — the learning rates the validation
+        run trained its best epochs at. ``ReduceLROnPlateau`` cannot run here, as
+        there is no held-out loss to react to, so its decisions are replayed.
+
+        The checkpoint keeps the validation run's ``val_loss`` and ``best_epoch``:
+        that is the only honest estimate of how this recipe does on unseen reps.
+        A cancelled refit leaves the validation run's checkpoint in place.
+        """
+        n_reps = sum(len(s.targets) for s in sequences)
+        print(f"\nRefitting on all {n_reps} reps for {len(lrs)} epochs…")
+        inputs, targets, lengths, starts = self._preload(sequences)
+        model, optimizer = self._fresh_model()
+
+        for epoch, lr in enumerate(lrs):
+            if stop_event is not None and stop_event.is_set():
+                print("Refit stopped — keeping the validation run's checkpoint.")
+                return
+            for group in optimizer.param_groups:
+                group["lr"] = lr
+            loss = self._run_epoch(model, inputs, targets, lengths, starts, optimizer)
+            print(f"{epoch + 1:>6}  {loss:>10.5f}  {'':>10}  {lr:>10.2e}")
+            if on_epoch is not None:
+                on_epoch(epoch + 1, len(lrs), loss)
+
+        save_checkpoint(model, ckpt_path, val_loss, best_epoch)
 
     def _report_ceilings(
         self,
         ckpt_path: Path,
         inputs: torch.Tensor,
         lengths: torch.Tensor,
+        starts: torch.Tensor,
     ) -> None:
-        """Print the saved model's fitted ceilings over the validation set.
+        """Print the saved model's fitted ceilings over the validation reps.
 
         The number worth seeing is whether the head actually learned the split it
         was added for: mean ``p0`` after a remembered rep against after a lapse.
@@ -169,6 +259,7 @@ class Trainer:
                 bl = lengths[bi]
                 max_l = int(bl.max().item())
                 bx = inputs[bi][:, :max_l, :]
+                mask = _step_mask(bl, starts[bi], max_l)
 
                 # Same one-step roll as `_predict`: row i of the history carries
                 # the outcome of the rep that starts the curve emitted at step i.
@@ -178,7 +269,6 @@ class Trainer:
                 x_hist[..., 1:] = bx[..., 1:]
 
                 p0 = ceiling(model(x_hist))
-                mask = torch.arange(max_l, device=self._device) < bl.unsqueeze(1)
                 if not bool(mask.any()):
                     continue
                 lo = min(lo, float(p0[mask].min()))
@@ -211,8 +301,11 @@ class Trainer:
 
     def _preload(
         self, sequences: list[Sequence]
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Pad every sequence to the global max length and move to the active device.
+
+        Returns ``(inputs, targets, lengths, starts)``, where ``starts`` holds each
+        sequence's :attr:`~src.model.dataset.Sequence.scored_from`.
 
         Doing this once up front avoids per-batch host→device copies during
         training. The padded dataset is small (tens of MB) so memory is not a concern.
@@ -227,7 +320,13 @@ class Trainer:
             inputs[i, :seq_len] = s.inputs
             targets[i, :seq_len] = s.targets
         lengths_t = torch.tensor(lengths, dtype=torch.long)
-        return inputs.to(self._device), targets.to(self._device), lengths_t.to(self._device)
+        starts = torch.tensor([s.scored_from for s in sequences], dtype=torch.long)
+        return (
+            inputs.to(self._device),
+            targets.to(self._device),
+            lengths_t.to(self._device),
+            starts.to(self._device),
+        )
 
     def _run_epoch(
         self,
@@ -235,17 +334,26 @@ class Trainer:
         inputs: torch.Tensor,
         targets: torch.Tensor,
         lengths: torch.Tensor,
+        starts: torch.Tensor,
         optimizer: torch.optim.Optimizer | None,
     ) -> float:
-        """Run one full pass over the dataset; ``None`` optimizer ⇒ validation."""
+        """Run one full pass over the dataset; ``None`` optimizer ⇒ validation.
+
+        Every rep weighs the same: each batch's summed loss is divided by one
+        constant — the dataset's mean reps per batch — rather than by its own rep
+        count, which keeps the gradient scale of the old per-batch mean. The
+        returned loss is the mean per scored rep over the whole pass.
+        """
         training = optimizer is not None
         model.train(training)
 
+        batches = bucket_batches(lengths, self._cfg.batch_size, shuffle=training)
+        n_reps = int((lengths - starts).sum().item())
+        reps_per_batch = n_reps / max(len(batches), 1)
         total_loss = 0.0
-        n_batches = 0
 
         with torch.set_grad_enabled(training):
-            for bi in bucket_batches(lengths, self._cfg.batch_size, shuffle=training):
+            for bi in batches:
                 bx = inputs[bi]
                 bt = targets[bi]
                 bl = lengths[bi]
@@ -255,30 +363,32 @@ class Trainer:
                 bt = bt[:, :max_l]
 
                 pred = _predict(model, bx)
-                loss = masked_bce(pred, bt, bl)
+                loss_sum = masked_bce(pred, bt, _step_mask(bl, starts[bi], max_l))
 
                 if training:
                     optimizer.zero_grad()
-                    loss.backward()
+                    (loss_sum / reps_per_batch).backward()
                     nn.utils.clip_grad_norm_(
                         model.parameters(), max_norm=self._cfg.grad_clip_max_norm,
                     )
                     optimizer.step()
 
-                total_loss += loss.item()
-                n_batches += 1
+                total_loss += loss_sum.item()
 
-        return total_loss / max(n_batches, 1)
+        return total_loss / max(n_reps, 1)
 
 
 def train(
     config: TrainConfig | None = None,
     on_epoch: EpochCallback | None = None,
     stop_event: threading.Event | None = None,
+    on_refit_epoch: RefitCallback | None = None,
 ) -> Path:
     """Module-level convenience wrapper around :class:`Trainer`.
 
     The active database (set via :func:`src.database.init_db`) is read by
     the trainer; this function does not take a ``db_url`` itself.
     """
-    return Trainer(config or TrainConfig()).run(on_epoch=on_epoch, stop_event=stop_event)
+    return Trainer(config or TrainConfig()).run(
+        on_epoch=on_epoch, stop_event=stop_event, on_refit_epoch=on_refit_epoch,
+    )

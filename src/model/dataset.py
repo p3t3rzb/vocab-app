@@ -9,14 +9,14 @@ events are turned into timesteps:
   practice direction (constant across the sequence).
 * ``target = remembered`` — whether the current rep was recalled.
 
-The train/val split is done at the **word** level (not the sequence level)
-so a word never leaks across the split.
+The train/val split is done in **time**: every rep after one cutoff date is held
+out (see :func:`split_by_time`), which is what a refit faces — learn from
+everything so far, then predict what comes next.
 """
 from __future__ import annotations
 
 import math
-import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import torch
 
@@ -39,6 +39,9 @@ class Sequence:
             ``[log_delta, prev_remembered, prev_not_remembered, is_forward,
             is_reverse]`` per timestep.
         targets: Tensor of shape ``(L,)`` — recall outcome at each timestep.
+        practiced_at: Tensor of shape ``(L,)`` — Unix time of each target rep.
+        scored_from: Index of the first timestep the loss counts. Earlier steps
+            are history only: the model reads them but is not scored on them.
     """
 
     word_id: int
@@ -47,6 +50,8 @@ class Sequence:
     target_text: str
     inputs: torch.Tensor   # (L, 5)  [log_delta, prev_rem, prev_not_rem, is_fwd, is_rev]
     targets: torch.Tensor  # (L,)    remembered at each step
+    practiced_at: torch.Tensor  # (L,)  unix time of each target rep
+    scored_from: int = 0
 
     @classmethod
     def from_repetitions(
@@ -76,6 +81,9 @@ class Sequence:
             target_text=word.target_text,
             inputs=torch.tensor(inputs, dtype=torch.float32),
             targets=torch.tensor(targets, dtype=torch.float32),
+            practiced_at=torch.tensor(
+                [rep.practiced_at for rep in reps[1:]], dtype=torch.int64
+            ),
         )
 
 
@@ -108,23 +116,40 @@ def build_sequences() -> list[Sequence]:
     return sequences
 
 
-def split_sequences(
+def split_by_time(
     sequences: list[Sequence],
     val_split: float,
-    seed: int,
 ) -> tuple[list[Sequence], list[Sequence]]:
-    """Split sequences into ``(train, val)`` at the word level.
+    """Split sequences into ``(train, val)`` at one cutoff date shared by every word.
 
-    All sequences belonging to the same word land on the same side of the
-    split so the validation set is genuinely held-out — both directions of a
-    word stay together.
+    The cutoff is the date after which ``val_split`` of all scored reps fall
+    (reps sharing the cutoff timestamp all go to val). Train keeps each
+    sequence's steps before it; val scores the steps at or after it, with the
+    whole earlier history still fed in as input. Truncating a train sequence is
+    the same as masking its later steps, since the LSTM is causal.
+
+    One date for every word, rather than the last part of each word's own
+    history, keeps the future out of training: a per-word split would train on
+    one word's September reps while validating on another's June ones. Words
+    started late have few or no steps before the cutoff, so val also tests how
+    well the model handles newly-started words — as a refit has to.
     """
-    word_ids = list({s.word_id for s in sequences})
-    rng = random.Random(seed)
-    rng.shuffle(word_ids)
-    n_val = max(1, int(len(word_ids) * val_split))
-    val_words = set(word_ids[:n_val])
+    times = torch.cat([s.practiced_at for s in sequences]).sort().values
+    cutoff = int(times[min(int(len(times) * (1.0 - val_split)), len(times) - 1)])
 
-    train = [s for s in sequences if s.word_id not in val_words]
-    val = [s for s in sequences if s.word_id in val_words]
+    train: list[Sequence] = []
+    val: list[Sequence] = []
+    for s in sequences:
+        n_before = int((s.practiced_at < cutoff).sum())
+        if n_before > 0:
+            train.append(
+                replace(
+                    s,
+                    inputs=s.inputs[:n_before],
+                    targets=s.targets[:n_before],
+                    practiced_at=s.practiced_at[:n_before],
+                )
+            )
+        if n_before < len(s.targets):
+            val.append(replace(s, scored_from=n_before))
     return train, val

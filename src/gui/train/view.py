@@ -40,6 +40,7 @@ class TrainScreen(BaseScreen):
             self,
             handlers={
                 "epoch": self._on_epoch,
+                "refit_epoch": self._on_refit_epoch,
                 "done": self._on_training_done,
                 "cancelled": self._on_training_cancelled,
                 "error": self._on_training_error,
@@ -201,6 +202,12 @@ class TrainScreen(BaseScreen):
         total = self._epochs_var.get()
         self._status_var.set(
             f"Epoch {epoch}/{total} — Train: {train_loss:.5f}  |  Val: {val_loss:.5f}"
+        )
+
+    def _on_refit_epoch(self, epoch: int, total: int, train_loss: float) -> None:
+        """Final refit on every rep — no val loss, so it is not plotted."""
+        self._status_var.set(
+            f"Refitting on all reps: epoch {epoch}/{total} — Train: {train_loss:.5f}"
         )
 
     def _on_training_done(self, checkpoint_path: str) -> None:

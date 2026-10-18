@@ -21,8 +21,9 @@ class TrainConfig:
             the output head.
         lr: Adam learning rate.
         batch_size: Number of sequences per mini-batch.
-        val_split: Fraction of words (not sequences) held out for validation,
-            ensuring no word leaks across the train/val split.
+        val_split: Fraction of reps held out for validation — the most recent
+            ones, cut at one date shared by every word (see
+            :func:`src.model.dataset.split_by_time`).
         seed: RNG seed for reproducible splits and weight initialisation.
         checkpoint_dir: Directory where ``<src>_<tgt>.pt`` checkpoints are
             written. Created automatically if missing.

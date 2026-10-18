@@ -37,6 +37,7 @@ def training_worker(
             config=cfg,
             on_epoch=lambda e, tr, vl: out_queue.put(("epoch", e, tr, vl)),
             stop_event=stop_event,
+            on_refit_epoch=lambda e, n, tr: out_queue.put(("refit_epoch", e, n, tr)),
         )
         if stop_event.is_set():
             out_queue.put(("cancelled",))
