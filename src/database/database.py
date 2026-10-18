@@ -43,8 +43,8 @@ class Database:
 
         Also performs an idempotent migration: the per-direction ceiling columns
         (``fwd_ceiling`` / ``rev_ceiling`` and their ``_ok`` / ``_no`` variants)
-        and the ``priority`` flag are added via ``ALTER TABLE`` on databases
-        that pre-date them.
+        and the ``priority`` / ``ignored`` flags are added via ``ALTER TABLE`` on
+        databases that pre-date them.
 
         Args:
             database_url: SQLAlchemy URL such as
@@ -97,7 +97,7 @@ class Database:
 
     @staticmethod
     def _run_migrations(engine: Engine) -> None:
-        """Add the ceiling and priority columns to databases that pre-date them.
+        """Add the ceiling, priority and ignored columns to databases that pre-date them.
 
         The curve became ``R(Δt) = p0·exp(−Δt/τ)``, so every stored ``_tau``
         column needs the ``_ceiling`` column that completes it; ``create_all``
@@ -110,8 +110,8 @@ class Database:
         with a ``NULL`` ``τ`` — a direction with no history — keep a ``NULL``
         ceiling, which is what marks the card as new.
 
-        ``priority`` is added as ``NOT NULL DEFAULT 0``, so every existing word
-        starts out as an ordinary, non-priority word.
+        ``priority`` and ``ignored`` are added as ``NOT NULL DEFAULT 0``, so every
+        existing word starts out as an ordinary, non-priority, practised word.
 
         Idempotent: each column is added only if ``PRAGMA table_info`` does not
         already list it, so this runs on every startup at the cost of one pragma.
@@ -132,11 +132,12 @@ class Database:
                         )
                     )
                     changed = True
-            if "priority" not in cols:
-                conn.execute(
-                    text("ALTER TABLE words ADD COLUMN priority INTEGER NOT NULL DEFAULT 0")
-                )
-                changed = True
+            for flag in ("priority", "ignored"):
+                if flag not in cols:
+                    conn.execute(
+                        text(f"ALTER TABLE words ADD COLUMN {flag} INTEGER NOT NULL DEFAULT 0")
+                    )
+                    changed = True
             if changed:
                 conn.commit()
 

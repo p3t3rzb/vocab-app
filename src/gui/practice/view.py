@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import customtkinter as ctk
 
-from src.database import init_db
+from src.database import WordRepository, get_session, init_db
 
 from ..background import BackgroundJob
 from ..base_screen import BaseScreen
@@ -168,6 +168,17 @@ class PracticeScreen(BaseScreen):
             font=ctk.CTkFont(**Fonts.BODY_BOLD),
         ).grid(row=6, column=0, pady=(0, 4))
 
+        self._ignore_button = ctk.CTkButton(
+            content,
+            text="Ignore word",
+            width=110,
+            fg_color="transparent",
+            border_width=1,
+            text_color=("gray20", "gray80"),
+            command=self._ignore_current,
+        )
+        self._ignore_button.grid(row=8, column=0, pady=(8, 0))
+
         self._hint_var = ctk.StringVar(value="")
         ctk.CTkLabel(
             self,
@@ -249,6 +260,17 @@ class PracticeScreen(BaseScreen):
     def _set_state(self, state: PracticeState) -> None:
         """Update the visible widgets and hint bar to reflect the new state."""
         self._state = state
+
+        # Kept up through SAVING, which lasts only a moment between ANSWER and
+        # RESULT — hiding it there made it flicker on every answer.
+        # `_ignore_current` ignores the click instead.
+        if state in (
+            PracticeState.PROMPT, PracticeState.ANSWER,
+            PracticeState.SAVING, PracticeState.RESULT,
+        ):
+            self._ignore_button.grid()
+        else:
+            self._ignore_button.grid_remove()
 
         if state is PracticeState.LOADING:
             self._direction_var.set("")
@@ -399,6 +421,29 @@ class PracticeScreen(BaseScreen):
         self._answer_job.start(
             answer_worker, card, remembered, self._predictor, self._answer_job.queue,
         )
+
+    def _ignore_current(self) -> None:
+        """Flag the shown card's word as ignored and move on.
+
+        Both directions are dropped from the session — the word's other card may
+        still be queued, or the answered card re-queued — and :func:`build_queue`
+        leaves the word out of every later session until it is un-ignored from
+        the edit dialog.
+        """
+        if self._current is None or self._state is PracticeState.SAVING:
+            return
+        word_id = self._current.word_id
+        try:
+            with get_session() as session:
+                word = WordRepository(session).get_by_id(word_id)
+                if word is not None:
+                    word.ignored = True
+        except Exception as exc:
+            messagebox.showerror("Ignore failed", str(exc), parent=self)
+            return
+        self._queue.remove_word(word_id)
+        self._waiting.remove_word(word_id)
+        self._show_current()
 
     def _advance(self) -> None:
         """RESULT → PROMPT (or OFFER_EXTRA / DONE): move to the next card."""

@@ -18,7 +18,7 @@ from .base import BaseDialog
 
 
 class WordEditDialog(BaseDialog):
-    """Two-field modal (plus a priority checkbox) that adds or edits a word."""
+    """Two-field modal (plus priority / ignored checkboxes) that adds or edits a word."""
 
     def __init__(
         self,
@@ -61,15 +61,22 @@ class WordEditDialog(BaseDialog):
         self._tgt_entry = ctk.CTkEntry(self, width=260)
         self._tgt_entry.grid(row=1, column=1, padx=(0, 20), pady=6, sticky="ew")
 
+        flags = ctk.CTkFrame(self, fg_color="transparent")
+        flags.grid(row=2, column=1, padx=(0, 20), pady=6, sticky="w")
         self._priority_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            self, text="Priority", variable=self._priority_var,
-        ).grid(row=2, column=1, padx=(0, 20), pady=6, sticky="w")
+            flags, text="Priority", variable=self._priority_var,
+        ).pack(side="left")
+        self._ignored_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(
+            flags, text="Ignored", variable=self._ignored_var,
+        ).pack(side="left", padx=(16, 0))
 
         if self._word is not None:
             self._src_entry.insert(0, self._word.source_text)
             self._tgt_entry.insert(0, self._word.target_text)
             self._priority_var.set(self._word.priority)
+            self._ignored_var.set(self._word.ignored)
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.grid(row=3, column=0, columnspan=2, pady=(20, 16))
@@ -89,6 +96,7 @@ class WordEditDialog(BaseDialog):
         src_text = self._src_entry.get().strip()
         tgt_text = self._tgt_entry.get().strip()
         priority = self._priority_var.get()
+        ignored = self._ignored_var.get()
 
         if not src_text or not tgt_text:
             messagebox.showwarning(
@@ -113,6 +121,7 @@ class WordEditDialog(BaseDialog):
                         source_text=src_text,
                         target_text=tgt_text,
                         priority=priority,
+                        ignored=ignored,
                     ))
             else:
                 with get_session() as session:
@@ -121,6 +130,7 @@ class WordEditDialog(BaseDialog):
                         word.source_text = src_text
                         word.target_text = tgt_text
                         word.priority = priority
+                        word.ignored = ignored
         except Exception as exc:
             messagebox.showerror("Save failed", str(exc), parent=self)
             return

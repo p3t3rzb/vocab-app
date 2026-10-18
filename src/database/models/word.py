@@ -43,8 +43,11 @@ class Word(BaseORM):
             hypothetical remembered / forgotten answer.
         rev_ok_tau / rev_ok_ceiling, rev_no_tau / rev_no_ceiling: the same for REVERSE.
         priority: Whether the word belongs to the user's priority subset. The
-            practice queue serves priority words — both their due reviews and
-            their introduction as new words — ahead of every other word.
+            practice queue introduces new priority words ahead of every other new
+            word; once a direction is learned, its reviews ignore the flag.
+        ignored: Whether the user has set the word aside. The practice queue
+            leaves ignored words out entirely until they are un-ignored; their
+            history and curves are kept untouched.
         repetitions: All practice events for this word, in any direction.
             Cascades on delete so removing a Word also removes its history.
     """
@@ -69,6 +72,9 @@ class Word(BaseORM):
     rev_no_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
 
     priority: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
+    ignored: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"
     )
 

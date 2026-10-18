@@ -140,6 +140,14 @@ class PracticeQueue:
             return None
         return heapq.heappop(self._heap)[3]
 
+    def remove_word(self, word_id: int) -> None:
+        """Drop every card of ``word_id`` (either direction) from the heap.
+
+        ``O(N)`` — a rebuild — but it only runs when the user ignores a word.
+        """
+        self._heap = [e for e in self._heap if e[3].word_id != word_id]
+        heapq.heapify(self._heap)
+
     def peek_priority(self) -> float | None:
         """Return the smallest priority without popping, or ``None`` if empty."""
         if not self._heap:
@@ -288,6 +296,8 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     constants): due priority reviews, then new priority words, then due ordinary
     reviews, then new ordinary words.
 
+    Ignored words are left out of both queues.
+
     Every learned card carries the curves it was scored from, so the session can
     re-score it with :func:`card_gain` at the moment it is actually served.
 
@@ -305,6 +315,8 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
         last_by_dir = RepetitionRepository(session).latest_practiced_at_by_word_direction()
 
     for word in words:
+        if word.ignored:
+            continue
         for direction in Direction:
             last = last_by_dir.get((word.id, int(direction)))
             current = _curve(word, direction, "")

@@ -187,6 +187,10 @@ class WordListScreen(BaseScreen):
                 sort_key=lambda w: not w.priority,  # priority words first
             ),
             ColumnSpec(
+                "ignored", "⊘", 36, 36, anchor="center",
+                sort_key=lambda w: not w.ignored,  # ignored words first
+            ),
+            ColumnSpec(
                 "source", self._ctx.src_lang, 240, 100,
                 sort_key=lambda w: w.source_text.lower(),
             ),
@@ -284,6 +288,7 @@ class WordListScreen(BaseScreen):
                 "", "end",
                 values=(
                     "★" if word.priority else "",
+                    "⊘" if word.ignored else "",
                     word.source_text,
                     word.target_text,
                     format_due(fwd_due),
