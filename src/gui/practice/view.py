@@ -22,11 +22,11 @@ from ..widgets import build_header
 from .queue_model import (
     ERROR_PRIORITY,
     TIER_EXTRA,
+    TIER_REVIEW,
     Card,
     PracticeQueue,
     card_gain,
     drain_waiting,
-    review_tier,
 )
 from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
@@ -376,7 +376,7 @@ class PracticeScreen(BaseScreen):
                 continue
             if can_score:
                 card.score = card_gain(card, now)
-            self._queue.push(card, -card.score, review_tier(card))
+            self._queue.push(card, -card.score, TIER_REVIEW)
 
     def _show_current(self) -> None:
         """Pop and render the next-most-urgent card, or transition to DONE when empty."""
@@ -547,7 +547,7 @@ class PracticeScreen(BaseScreen):
                 # re-scored again if it waits, so this score only has to order it
                 # against the queue as it stands now.
                 refreshed.score = card_gain(refreshed, now)
-                self._queue.push(refreshed, -refreshed.score, review_tier(refreshed))
+                self._queue.push(refreshed, -refreshed.score, TIER_REVIEW)
             else:
                 # Due in the future — park it in the waiting heap so it can be
                 # promoted back if it comes due before the session ends.

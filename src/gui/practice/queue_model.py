@@ -16,11 +16,11 @@ in directional pairs — both directions of a word back to back, and words with
 only one direction left new ahead of brand-new pairs — so a word is finished
 rather than half-learned.
 
-Words flagged as **priority** come first. The heap is keyed by a *tier* before
-the score, so a session runs: due priority reviews, new priority words, due
-ordinary reviews, new ordinary words — each by its own key within the tier. A
-priority word is thus brought back above the threshold, and then introduced,
-before anything else is touched.
+Words flagged as **priority** are introduced first. The heap is keyed by a
+*tier* before the score, so a session runs: due reviews, new priority words, new
+ordinary words — each by its own key within the tier. Priority only decides the
+order new words are met in; once learned, a priority word's reviews compete on
+expected gain like any other.
 
 Once even those run out the session need not end: :func:`drain_waiting` folds
 the not-yet-due cards into the main queue on the same expected-gain key, so
@@ -64,15 +64,14 @@ ERROR_PRIORITY = -_UNSCORED_PRIORITY
 
 #: Heap tiers, compared before the priority key: every card in a lower tier is
 #: served before any card in a higher one. Learned cards (due or unscored) sit in
-#: a review tier, never-practised ones in a new tier, each split by the word's
+#: the review tier, never-practised ones in a new tier split by the word's
 #: priority flag.
-TIER_PRIORITY_REVIEW = 0
+TIER_REVIEW = 0
 TIER_PRIORITY_NEW = 1
-TIER_REVIEW = 2
-TIER_NEW = 3
+TIER_NEW = 2
 #: The extra-practice pool (:func:`drain_waiting`) and cards the session could not
 #: score — behind everything, so a card that comes due is still served first.
-TIER_EXTRA = 4
+TIER_EXTRA = 3
 
 
 @dataclass(slots=True)
@@ -87,7 +86,7 @@ class Card:
     #: Expected retained seconds a review right now would add. The heap is keyed
     #: by its negation, so higher is practiced sooner.
     score: float
-    #: Whether the word is in the priority subset, which decides its heap tier.
+    #: Whether the word is in the priority subset, whose new words are met first.
     priority: bool
     #: The direction's three stored curves, each a time constant with the ceiling
     #: the model predicted beside it: the present curve (``None`` when the card has
@@ -156,11 +155,6 @@ class PracticeQueue:
 
     def __len__(self) -> int:
         return len(self._heap)
-
-
-def review_tier(card: Card) -> int:
-    """Heap tier for a learned ``card`` that is due: priority words go first."""
-    return TIER_PRIORITY_REVIEW if card.priority else TIER_REVIEW
 
 
 def _curve(word, direction: Direction, suffix: str) -> Curve | None:
@@ -275,26 +269,26 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     For each (word, direction):
 
     * **New** (never practiced in that direction) → main queue in a new tier,
-      i.e. behind every learned card of the same priority, so new words are only
-      met once everything learned at that priority is above the threshold. New cards are
+      i.e. behind every due learned card, so new words are only met once
+      everything learned is above the threshold. New cards are
       grouped per word and shuffled as pairs, so both directions of a freshly-seen
       word appear back to back (in random order within the pair). Words whose
       *other* direction was already learned (only one new direction left) come
       first, so a half-learned word is finished before brand-new pairs are
       introduced.
-    * **Due** (``recall ≤ threshold``) → main queue at ``−score`` in its review
-      tier (:func:`review_tier`). The threshold
+    * **Due** (``recall ≤ threshold``) → main queue at ``−score`` in the review
+      tier. The threshold
       only gates *whether* a card is served, never the order the served ones come
       in.
     * **Not due** (``recall > threshold``) → waiting queue keyed by its due
       timestamp ``last + invert_curve(...)``, always ``> now``.
     * **Unscored** (curves not computed yet, i.e. history recorded with no
       estimator) → main queue at :data:`_UNSCORED_PRIORITY`, i.e. first within
-      their review tier, so they get rescored on answer.
+      the review tier, so they get rescored on answer.
 
-    Priority words fill tiers ahead of ordinary ones (see the ``TIER_*``
-    constants): due priority reviews, then new priority words, then due ordinary
-    reviews, then new ordinary words.
+    Priority only orders the new cards (see the ``TIER_*`` constants): due
+    reviews, then new priority words, then new ordinary words. A learned card is
+    handled the same whatever its word's priority.
 
     Ignored words are left out of both queues.
 
@@ -343,13 +337,13 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
 
             if current is None or card.success is None or card.failure is None:
                 # Practiced, but without the curves to score it from.
-                queue.push(card, _UNSCORED_PRIORITY + random.random(), review_tier(card))
+                queue.push(card, _UNSCORED_PRIORITY + random.random(), TIER_REVIEW)
                 continue
 
             card.score = card_gain(card, now)
 
             if recall_at(current.tau, now - last, current.ceiling) <= cfg.recall_threshold:
-                queue.push(card, -card.score, review_tier(card))
+                queue.push(card, -card.score, TIER_REVIEW)
             else:
                 # Not due yet — park it in the waiting heap keyed by due time.
                 due_ts = last + int(
@@ -371,7 +365,7 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
 def _push_new(queue: PracticeQueue, new_by_word: dict[int, list[Card]], tier: int) -> None:
     """Push one priority group's new cards into ``tier``, word by word.
 
-    The tier puts them after every learned card of their priority. A single-card
+    The tier puts them after every due learned card. A single-card
     bucket means the word's other direction already has history (learned in an
     earlier session), so finish that half-learned word before meeting brand-new
     pairs: order the single-card buckets ahead of the two-card ones. Shuffle
