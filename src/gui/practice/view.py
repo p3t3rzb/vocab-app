@@ -28,9 +28,10 @@ from .queue_model import (
     card_gain,
     drain_waiting,
     park_not_due,
+    refresh_top,
 )
 from .state import ArrowKey, PracticeState
-from .workers import answer_worker, init_worker
+from .workers import answer_worker, init_worker, refresh_post_rep_curves
 
 from src.model import HeuristicPredictor
 from src.model.curve import Curve
@@ -383,6 +384,13 @@ class PracticeScreen(BaseScreen):
     def _show_current(self) -> None:
         """Pop and render the next-most-urgent card, or transition to DONE when empty."""
         self._promote_due()
+        if self._predictor is not None:
+            predictor = self._predictor
+            refresh_top(
+                self._queue,
+                int(time.time()),
+                lambda cards, now: refresh_post_rep_curves(cards, predictor, now),
+            )
         card = self._queue.pop()
         if card is None:
             self._current = None

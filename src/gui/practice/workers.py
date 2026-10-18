@@ -88,6 +88,26 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
         out_queue.put(("error", str(exc)))
 
 
+def refresh_post_rep_curves(
+    cards: list[Card], predictor: RecallEstimator, now: int
+) -> None:
+    """Set each card's ``success`` / ``failure`` curves for a review dated ``now``.
+
+    The ``refresh`` callback for :func:`~.queue_model.refresh_top`. Unlike the
+    workers above it runs synchronously on the main thread — it is one batched
+    forward over a handful of cards, and the card it helps pick is about to be
+    shown.
+    """
+    with get_session() as session:
+        reps_repo = RepetitionRepository(session)
+        histories = [
+            (reps_repo.get_for_word(card.word_id, card.direction), card.direction)
+            for card in cards
+        ]
+    for card, (success, failure) in zip(cards, predictor.post_rep_curves(histories, now)):
+        card.success, card.failure = success, failure
+
+
 def answer_worker(
     card: Card,
     remembered: bool,

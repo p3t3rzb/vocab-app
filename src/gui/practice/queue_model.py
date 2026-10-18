@@ -49,6 +49,7 @@ from __future__ import annotations
 import heapq
 import math
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from src.database import (
@@ -74,6 +75,12 @@ _UNSCORED_PRIORITY = -1e18
 #: (the answer worker hit an error). A plain ``0.0`` score no longer means "last"
 #: now that a gain can be negative, so this is spelled out separately.
 ERROR_PRIORITY = -_UNSCORED_PRIORITY
+
+#: How many of the most urgent cards :func:`refresh_top` re-dates before one is
+#: served. Measured on the French deck: ~30 ms per card shown at 8, ~160 ms at 32.
+#: A card answered earlier in the session is the one most overstated, so it sits
+#: at the head of the heap and a small window still catches it.
+REFRESH_TOP_K = 8
 
 #: Heap tiers, compared before the priority key: every card in a lower tier is
 #: served before any card in a higher one. Learned cards (due or unscored) sit in
@@ -151,6 +158,19 @@ class PracticeQueue:
         if not self._heap:
             return None
         return heapq.heappop(self._heap)[3]
+
+    def pop_entries(self, k: int) -> list[tuple[int, float, int, Card]]:
+        """Remove and return up to ``k`` raw ``(tier, priority, seq, card)`` entries, most urgent first."""
+        return [heapq.heappop(self._heap) for _ in range(min(k, len(self._heap)))]
+
+    def push_entry(self, entry: tuple[int, float, int, Card]) -> None:
+        """Re-insert an entry from :meth:`pop_entries`, keeping its ``seq``.
+
+        Keeping the original ``seq`` matters for ties: new cards share one key and
+        are ordered by ``seq`` alone, so re-pushing them as fresh entries would move
+        them behind every other new card and could split a word's two directions.
+        """
+        heapq.heappush(self._heap, entry)
 
     def remove_word(self, word_id: int) -> None:
         """Drop every card of ``word_id`` (either direction) from the heap.
@@ -231,6 +251,59 @@ def card_gain(card: Card, now: int) -> float:
     # already inside `recall`, and applying it twice is the trap `remaining_seconds`
     # exists to prevent.
     return expected_gain(recall, card.current.tau, card.success, card.failure)
+
+
+def refresh_top(
+    queue: PracticeQueue,
+    now: int,
+    refresh: Callable[[list[Card], int], None],
+    k: int = REFRESH_TOP_K,
+) -> None:
+    """Re-date the post-review curves of the ``k`` most urgent cards to ``now`` and re-key them.
+
+    A card's success / failure curves come from appending a hypothetical review
+    to its history, and that review's *gap* is an input to the model. The stored
+    curves date it to whenever they were computed — the last full param pass, or
+    the card's own last answer, i.e. a gap of zero. Scoring them against the live
+    recall then mixes two moments. The model is most sensitive to that gap within
+    the first hour (on the French deck the median post-lapse time constant falls
+    from ~790 to ~560 days between a 0 and a 1 h gap), so a card answered earlier
+    in the session comes back with an overstated gain.
+
+    Re-dating every card would cost ~2 ms each, too slow for the whole deck, so
+    only the head of the heap is refreshed just before a card is served. That is
+    where it matters: a stale card overstates its gain, which is exactly what puts
+    it near the head. The refreshed curves are not written back — they would go
+    stale again just as quickly.
+
+    Cards without a full set of curves (new, unscored, failed) keep their key.
+    A new card's curves need no re-dating: its hypothetical review is its first,
+    whose gap is always zero.
+
+    Args:
+        queue: Main queue; its head is popped, re-keyed and pushed back.
+        now: Unix timestamp the hypothetical review is dated to.
+        refresh: Sets ``success`` / ``failure`` on each card it is given for a
+            review at ``now``.
+        k: How many of the most urgent cards to refresh.
+    """
+    entries = queue.pop_entries(k)
+    stale = [
+        card
+        for _, _, _, card in entries
+        if card.current is not None
+        and card.last_practiced is not None
+        and card.success is not None
+        and card.failure is not None
+    ]
+    if stale:
+        refresh(stale, now)
+    stale_ids = {id(card) for card in stale}
+    for tier, priority, seq, card in entries:
+        if id(card) in stale_ids:
+            card.score = card_gain(card, now)
+            priority = -card.score
+        queue.push_entry((tier, priority, seq, card))
 
 
 def drain_waiting(queue: PracticeQueue, waiting: PracticeQueue, now: int) -> int:
