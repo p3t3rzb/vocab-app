@@ -23,6 +23,8 @@ import torch
 from src.database import Direction, RepetitionRepository, WordRepository, get_session
 from src.database.models import Repetition, Word
 
+from .config import ScheduleConfig
+
 
 @dataclass
 class Sequence:
@@ -85,17 +87,23 @@ def build_sequences() -> list[Sequence]:
     (word, direction) pair that has at least two practice events.
     """
     sequences: list[Sequence] = []
+    chunk_size = ScheduleConfig().chunk_size
 
     with get_session() as session:
         words = WordRepository(session).get_all()
         reps_repo = RepetitionRepository(session)
 
-        for word in words:
-            for direction in Direction:
-                reps = reps_repo.get_for_word(word.id, direction)
-                seq = Sequence.from_repetitions(word, direction, reps)
-                if seq is not None:
-                    sequences.append(seq)
+        # One query per chunk of words: a query per (word, direction) is ~30 s
+        # on a large deck, the whole table at once is hundreds of MB of ORM rows.
+        for chunk_start in range(0, len(words), chunk_size):
+            chunk = words[chunk_start : chunk_start + chunk_size]
+            reps_map = reps_repo.history_by_word_direction([w.id for w in chunk])
+            for word in chunk:
+                for direction in Direction:
+                    reps = reps_map.get((word.id, int(direction)), [])
+                    seq = Sequence.from_repetitions(word, direction, reps)
+                    if seq is not None:
+                        sequences.append(seq)
 
     return sequences
 

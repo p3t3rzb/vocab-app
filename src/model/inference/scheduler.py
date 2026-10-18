@@ -38,7 +38,7 @@ from pathlib import Path
 
 from sqlalchemy import select, update as sa_update
 
-from src.database import Direction, get_session
+from src.database import Direction, RepetitionRepository, get_session
 from src.database.models import Repetition, Word
 
 from ..checkpoint import load_model
@@ -84,20 +84,9 @@ class ParamScheduler:
         removes the ordering problem instead of solving it.
         """
         with get_session() as session:
-            all_words = list(session.scalars(select(Word).order_by(Word.id)))
-            all_reps = list(
-                session.scalars(
-                    select(Repetition).order_by(
-                        Repetition.word_id, Repetition.direction, Repetition.practiced_at
-                    )
-                )
-            )
+            word_ids = list(session.scalars(select(Word.id).order_by(Word.id)))
 
-        reps_map: dict[tuple[int, int], list[Repetition]] = defaultdict(list)
-        for rep in all_reps:
-            reps_map[(rep.word_id, rep.direction)].append(rep)
-
-        total = len(all_words)
+        total = len(word_ids)
         chunk_size = self._schedule_cfg.chunk_size
         # One timestamp for the whole pass: the hypothetical "practised now" rep
         # is dated from it, so every card is scored against the same moment.
@@ -107,7 +96,10 @@ class ParamScheduler:
             if stop_event is not None and stop_event.is_set():
                 return
 
-            chunk = all_words[chunk_start : chunk_start + chunk_size]
+            chunk = word_ids[chunk_start : chunk_start + chunk_size]
+            # Histories are read per chunk, never the whole table at once.
+            with get_session() as session:
+                reps_map = RepetitionRepository(session).history_by_word_direction(chunk)
             chunk_updates = self._process_chunk(chunk, reps_map, now)
 
             if chunk_updates:
@@ -118,7 +110,7 @@ class ParamScheduler:
 
     def _process_chunk(
         self,
-        words: list[Word],
+        word_ids: list[int],
         reps_map: dict[tuple[int, int], list[Repetition]],
         now: int,
     ) -> dict[int, tuple[CardCurves, CardCurves]]:
@@ -136,9 +128,9 @@ class ParamScheduler:
         slots: list[tuple[tuple[int, int], int]] = []
         sequences: list[list[list[float]]] = []
 
-        for word in words:
+        for word_id in word_ids:
             for direction in Direction:
-                key = (word.id, int(direction))
+                key = (word_id, int(direction))
                 reps = reps_map.get(key, [])
                 if not reps:
                     # Never practised: the practice queue orders this card by its
@@ -174,11 +166,11 @@ class ParamScheduler:
             return current, ok, no  # type: ignore[return-value]
 
         return {
-            word.id: (
-                curves((word.id, int(Direction.FORWARD))),
-                curves((word.id, int(Direction.REVERSE))),
+            word_id: (
+                curves((word_id, int(Direction.FORWARD))),
+                curves((word_id, int(Direction.REVERSE))),
             )
-            for word in words
+            for word_id in word_ids
         }
 
 
@@ -246,31 +238,26 @@ def backfill_heuristic_params(
 
     with get_session() as session:
         word_ids = list(session.scalars(select(Word.id).order_by(Word.id)))
-        all_reps = list(
-            session.scalars(
-                select(Repetition).order_by(
-                    Repetition.word_id, Repetition.direction, Repetition.practiced_at
-                )
-            )
-        )
-
-    reps_map: dict[tuple[int, int], list[Repetition]] = defaultdict(list)
-    for rep in all_reps:
-        reps_map[(rep.word_id, rep.direction)].append(rep)
 
     now = int(time.time())
+    chunk_size = ScheduleConfig().chunk_size
     updates: dict[int, tuple[CardCurves, CardCurves]] = {}
-    for word_id in word_ids:
-        per_direction: list[CardCurves] = []
-        for direction in Direction:
-            reps = reps_map.get((word_id, int(direction)), [])
-            if not reps:
-                per_direction.append((None, None, None))
-                continue
-            current = predictor.curve(reps, direction)
-            ok, no = predictor.post_rep_curves([(reps, direction)], now)[0]
-            per_direction.append((current, ok, no))
-        updates[word_id] = (per_direction[0], per_direction[1])
+    for chunk_start in range(0, len(word_ids), chunk_size):
+        chunk = word_ids[chunk_start : chunk_start + chunk_size]
+        # Histories are read per chunk, never the whole table at once.
+        with get_session() as session:
+            reps_map = RepetitionRepository(session).history_by_word_direction(chunk)
+        for word_id in chunk:
+            per_direction: list[CardCurves] = []
+            for direction in Direction:
+                reps = reps_map.get((word_id, int(direction)), [])
+                if not reps:
+                    per_direction.append((None, None, None))
+                    continue
+                current = predictor.curve(reps, direction)
+                ok, no = predictor.post_rep_curves([(reps, direction)], now)[0]
+                per_direction.append((current, ok, no))
+            updates[word_id] = (per_direction[0], per_direction[1])
 
     if updates:
         _persist_params(updates)

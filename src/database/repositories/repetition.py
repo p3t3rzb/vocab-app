@@ -54,16 +54,22 @@ class RepetitionRepository(BaseRepository):
             for word_id, direction, latest in self._session.execute(stmt)
         }
 
-    def history_by_word_direction(self) -> dict[tuple[int, int], list[Repetition]]:
-        """Group the whole table into per-(word, direction) histories, oldest first.
+    def history_by_word_direction(
+        self, word_ids: list[int]
+    ) -> dict[tuple[int, int], list[Repetition]]:
+        """Group ``word_ids``' repetitions into per-(word, direction) histories, oldest first.
 
-        One query for every repetition — the bulk counterpart of
-        :meth:`get_for_word`, for callers that need many histories at once (the
-        param scheduler forwards every card's history in batched passes).
+        One query for a whole chunk of words — the bulk counterpart of
+        :meth:`get_for_word`, for callers that walk every word (the param
+        scheduler, the heuristic backfill, the training-set builder). Callers pass
+        one chunk at a time rather than every id: the full table as ORM objects
+        is hundreds of MB on a large deck (~585 MB for 465k reps).
         Keys are ``(word_id, direction_int)``; pairs with no history are absent.
         """
-        stmt = select(Repetition).order_by(
-            Repetition.word_id, Repetition.direction, Repetition.practiced_at
+        stmt = (
+            select(Repetition)
+            .where(Repetition.word_id.in_(word_ids))
+            .order_by(Repetition.word_id, Repetition.direction, Repetition.practiced_at)
         )
         histories: dict[tuple[int, int], list[Repetition]] = defaultdict(list)
         for rep in self._session.scalars(stmt):

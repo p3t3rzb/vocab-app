@@ -124,8 +124,9 @@ class ScheduleConfig:
 
     Attributes:
         chunk_size: Number of words per commit-and-report chunk. Bounds how much
-            work a cancellation can discard and how often progress is reported;
-            it does *not* set the tensor shape.
+            work a cancellation can discard, how often progress is reported, and
+            how many words' histories are read from the database at once; it
+            does *not* set the tensor shape.
         batch_sequences: Number of sequences per batched LSTM forward. Each word
             contributes up to six (two directions × the current curve plus the two
             a review would produce), so this is the knob that actually sets memory
