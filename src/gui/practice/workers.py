@@ -47,7 +47,8 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
     touches words that have repetitions, and only once per app run.
     """
     try:
-        cfg = load_settings().to_predict_config()
+        settings = load_settings()
+        cfg = settings.to_predict_config()
         predictor: RecallEstimator
         if ctx.model_path.exists():
             predictor = Predictor(load_model(str(ctx.model_path)), cfg)
@@ -55,14 +56,34 @@ def init_worker(ctx: DbContext, out_queue: queue_module.Queue) -> None:
             predictor = HeuristicPredictor(cfg)
             ensure_heuristic_params(ctx)
 
-        queue, waiting = build_queue(now=int(time.time()), cfg=cfg)
-
-        # Repetitions already recorded today, before this session started — the
-        # screen adds its own answers on top of this baseline.
+        now = int(time.time())
         with get_session() as session:
-            today_count = RepetitionRepository(session).count_since(day_start())
+            reps_repo = RepetitionRepository(session)
+            # Repetitions already recorded today, before this session started —
+            # the screen adds its own answers on top of this baseline.
+            today_count = reps_repo.count_since(day_start())
+            first_success = reps_repo.first_attempt_success_rate()
 
-        out_queue.put(("ready", predictor, queue, waiting, today_count))
+        new_card_curves = None
+        if settings.gain_only_ordering:
+            # An empty history is a never-practised card; its post-review curves
+            # depend on the direction only, so two calls cover the whole deck.
+            new_card_curves = {
+                direction: predictor.post_rep_curves([([], direction)], now)[0]
+                for direction in Direction
+            }
+
+        queue, waiting = build_queue(
+            now=now,
+            cfg=cfg,
+            use_threshold=settings.use_threshold,
+            new_card_curves=new_card_curves,
+            first_success=first_success,
+        )
+
+        out_queue.put(
+            ("ready", predictor, queue, waiting, today_count, settings.use_threshold)
+        )
     except Exception as exc:
         out_queue.put(("error", str(exc)))
 

@@ -1,7 +1,8 @@
 """Form widgets and validation for the settings screen.
 
-:class:`SettingsForm` owns the four input widgets (threshold slider,
-max-interval entry, its "No maximum" checkbox, appearance radio buttons), the
+:class:`SettingsForm` owns the input widgets (threshold slider, max-interval
+entry, its "No maximum" checkbox, the two ordering checkboxes, appearance radio
+buttons), the
 live threshold label, and the :meth:`read` validator that returns an
 :class:`AppSettings` or ``None`` (after surfacing a warning dialog).
 
@@ -49,6 +50,8 @@ class SettingsForm:
             value=str(int(round(shown / _SECONDS_PER_DAY)))
         )
         self._appearance_var = ctk.StringVar(value=initial.appearance_mode)
+        self._gain_only_var = ctk.BooleanVar(value=initial.gain_only_ordering)
+        self._use_threshold_var = ctk.BooleanVar(value=initial.use_threshold)
 
         self._build()
 
@@ -134,6 +137,41 @@ class SettingsForm:
         self._no_max_check.pack(side="left", padx=(12, 0))
         row += 1
 
+        # Practice ordering
+        ctk.CTkLabel(
+            self._parent, text="Practice ordering:", anchor="w",
+            font=ctk.CTkFont(**Fonts.SECTION),
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(20, 2))
+        row += 1
+
+        ctk.CTkLabel(
+            self._parent,
+            text=(
+                "Gain-only ordering mixes new words into the reviews by expected "
+                "gain instead of introducing them only once nothing is due. Without "
+                "the threshold every learned word competes on its gain at any time. "
+                "Turning the threshold off requires gain-only ordering."
+            ),
+            anchor="w", wraplength=560, text_color="gray",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        row += 1
+
+        ctk.CTkCheckBox(
+            self._parent,
+            text="Order new and learned words by expected gain only",
+            variable=self._gain_only_var,
+            command=self._sync_threshold_check,
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        row += 1
+
+        self._use_threshold_check = ctk.CTkCheckBox(
+            self._parent,
+            text="Wait until words drop below the recall threshold",
+            variable=self._use_threshold_var,
+        )
+        self._use_threshold_check.grid(row=row, column=0, columnspan=2, sticky="w")
+        row += 1
+
         # Appearance
         ctk.CTkLabel(
             self._parent, text="Appearance:", anchor="w",
@@ -154,6 +192,7 @@ class SettingsForm:
 
         # Honour an already-unlimited setting: the entry starts greyed out.
         self._sync_max_days_entry()
+        self._sync_threshold_check()
 
     # ------------------------------------------------------------------
     # Event handlers
@@ -167,6 +206,14 @@ class SettingsForm:
         self._max_days_entry.configure(
             state="disabled" if self._no_max_var.get() else "normal"
         )
+
+    def _sync_threshold_check(self) -> None:
+        """Force the threshold on, and lock it, while gain-only ordering is off."""
+        if self._gain_only_var.get():
+            self._use_threshold_check.configure(state="normal")
+        else:
+            self._use_threshold_var.set(True)
+            self._use_threshold_check.configure(state="disabled")
 
     def _handle_appearance(self) -> None:
         self._on_appearance_change(self._appearance_var.get())
@@ -208,4 +255,6 @@ class SettingsForm:
             recall_threshold=round(float(self._threshold_var.get()), 4),
             max_delta_seconds=max_delta_seconds,
             appearance_mode=self._appearance_var.get(),
+            gain_only_ordering=self._gain_only_var.get(),
+            use_threshold=self._use_threshold_var.get(),
         )

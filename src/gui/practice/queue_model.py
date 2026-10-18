@@ -30,6 +30,15 @@ the ordering does not change, because it never depended on it. The folded-in
 cards share one last tier regardless of priority, so a card that comes due
 again meanwhile is still served ahead of them.
 
+Two settings change that layout (see :func:`build_queue`). **Gain-only ordering**
+drops the separate new tiers: a never-practised card is scored too — its whole
+expected post-review area, with the deck's first-attempt success rate standing in
+for recall — and competes with the due reviews, though every new priority word
+is still met before any ordinary one. **No threshold** (only offered alongside
+gain-only ordering, since otherwise learned cards would never run out and no new
+word would be met) drops the waiting heap: every learned card is in the main
+queue on its gain.
+
 Ordering on the gain rather than on current recall matters for a second reason:
 worst-recalled-first always reviews weak cards immediately, which locks difficulty
 and gap together and is why the trained model fits almost no decay. Deferring weak
@@ -38,6 +47,7 @@ cards is what supplies the long-gap observations the model needs.
 from __future__ import annotations
 
 import heapq
+import math
 import random
 from dataclasses import dataclass
 
@@ -49,6 +59,9 @@ from src.database import (
 )
 from src.model.config import PredictConfig
 from src.model.curve import Curve, expected_gain, invert_curve, recall_at
+
+#: Post-review ``(success, failure)`` curves of a never-practised card, per direction.
+NewCardCurves = dict[Direction, tuple[Curve, Curve]]
 
 # Priority for a card whose post-review curves have not been computed yet (a
 # database predating them). Scores are negated gains in *seconds*, and a gain is
@@ -256,7 +269,32 @@ def drain_waiting(queue: PracticeQueue, waiting: PracticeQueue, now: int) -> int
         moved += 1
 
 
-def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQueue]:
+def park_not_due(
+    queue: PracticeQueue,
+    waiting: PracticeQueue,
+    card: Card,
+    due_ts: int,
+    use_threshold: bool,
+) -> None:
+    """Place a scored learned card that is above the recall threshold.
+
+    With the threshold on it waits in ``waiting`` until ``due_ts``. Without it, it
+    competes in the main queue on its gain (``card.score``) in the review tier.
+    """
+    if use_threshold:
+        waiting.push(card, due_ts)
+    else:
+        queue.push(card, -card.score, TIER_REVIEW)
+
+
+def build_queue(
+    now: int,
+    cfg: PredictConfig,
+    *,
+    use_threshold: bool = True,
+    new_card_curves: NewCardCurves | None = None,
+    first_success: float = 0.5,
+) -> tuple[PracticeQueue, PracticeQueue]:
     """Build the (main, waiting) practice queues.
 
     Both queues are filled from stored time constants only — no model is loaded and no
@@ -295,15 +333,38 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
     Every learned card carries the curves it was scored from, so the session can
     re-score it with :func:`card_gain` at the moment it is actually served.
 
+    **Gain-only ordering** (``new_card_curves`` given): new cards skip the new
+    tiers and go into the review tier at ``−score`` like a due card, scored by
+    :func:`~src.model.curve.expected_gain` with no baseline. A word's new cards
+    are still kept back to back: both are keyed by the *mean* of their gains (the
+    pair costs two reviews), and equal keys pop in push order. A half-learned
+    word's remaining card is keyed by its own gain. All new cards of a direction
+    share the same curves, so words are shuffled to make ties fall in random
+    order. Priority words are pushed first, and an ordinary word's key is raised
+    to at least the last priority word's — new-card keys never change, so every
+    new priority word is met before any ordinary one.
+
+    **No threshold** (``use_threshold=False``): not-due cards go into the main
+    queue via :func:`park_not_due` instead of waiting, so the waiting heap stays
+    empty.
+
     Args:
         now: Unix timestamp the recall scores are evaluated at.
         cfg: Supplies the recall threshold and the ``max_delta_seconds`` cap on
             a waiting card's due time.
+        use_threshold: Whether not-due cards wait (``True``) or compete on gain.
+        new_card_curves: Post-review curves of a never-practised card per
+            direction, which switches on gain-only ordering; ``None`` keeps new
+            cards trailing the learned ones.
+        first_success: The deck's first-attempt success rate, standing in for a
+            new card's recall. Only read with ``new_card_curves``.
     """
     queue = PracticeQueue()
     waiting = PracticeQueue()
     new_by_word: dict[int, list[Card]] = {}
     new_priority_by_word: dict[int, list[Card]] = {}
+    new_scored_by_word: dict[int, list[Card]] = {}
+    new_scored_priority_by_word: dict[int, list[Card]] = {}
     with get_session() as session:
         words = WordRepository(session).get_all()
         last_by_dir = RepetitionRepository(session).latest_practiced_at_by_word_direction()
@@ -327,6 +388,17 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
                 success=_curve(word, direction, "_ok"),
                 failure=_curve(word, direction, "_no"),
             )
+
+            if last is None and new_card_curves is not None:
+                # Gain-only ordering: scored like any other card. Collected per
+                # word so a word's two directions can be pushed back to back.
+                card.success, card.failure = new_card_curves[direction]
+                card.score = expected_gain(
+                    first_success, None, card.success, card.failure
+                )
+                new = new_scored_priority_by_word if word.priority else new_scored_by_word
+                new.setdefault(word.id, []).append(card)
+                continue
 
             if last is None:
                 # Never practiced in this direction — trails all learned cards.
@@ -354,8 +426,18 @@ def build_queue(now: int, cfg: PredictConfig) -> tuple[PracticeQueue, PracticeQu
                         current.ceiling,
                     )
                 )
-                waiting.push(card, due_ts)
+                park_not_due(queue, waiting, card, due_ts, use_threshold)
 
+    floor = -math.inf  # ordinary new words key no earlier than any priority one
+    for new_scored in (new_scored_priority_by_word, new_scored_by_word):
+        new_words = list(new_scored.values())
+        random.shuffle(new_words)
+        keys = [max(-sum(c.score for c in cards) / len(cards), floor) for cards in new_words]
+        for cards, key in zip(new_words, keys):
+            random.shuffle(cards)  # random direction order within the pair
+            for card in cards:
+                queue.push(card, key, TIER_REVIEW)
+        floor = max(keys, default=floor)
     _push_new(queue, new_priority_by_word, TIER_PRIORITY_NEW)
     _push_new(queue, new_by_word, TIER_NEW)
 

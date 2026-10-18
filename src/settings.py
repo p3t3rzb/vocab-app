@@ -29,11 +29,19 @@ class AppSettings:
             and never consults it.
         appearance_mode: ``"Light"``, ``"Dark"``, or ``"System"`` — applied via
             ``ctk.set_appearance_mode`` at startup and when the user saves.
+        gain_only_ordering: Order new words together with due reviews by expected
+            gain, instead of introducing them only once nothing learned is due.
+        use_threshold: Whether learned cards above the recall threshold wait
+            until they drop below it. ``False`` lets every learned card compete on
+            its gain at all times, and is only valid with ``gain_only_ordering``
+            (otherwise no new word would ever be introduced).
     """
 
     recall_threshold: float = 0.80
     max_delta_seconds: float = 365 * 86400.0
     appearance_mode: str = "System"  # "Light" | "Dark" | "System"
+    gain_only_ordering: bool = False
+    use_threshold: bool = True
 
     def to_predict_config(self) -> PredictConfig:
         """Build a :class:`PredictConfig` with this settings' threshold/cap.

@@ -27,6 +27,7 @@ from .queue_model import (
     PracticeQueue,
     card_gain,
     drain_waiting,
+    park_not_due,
 )
 from .state import ArrowKey, PracticeState
 from .workers import answer_worker, init_worker
@@ -50,6 +51,7 @@ class PracticeScreen(BaseScreen):
         self._predictor: RecallEstimator | None = None
         self._queue: PracticeQueue = PracticeQueue()
         self._waiting: PracticeQueue = PracticeQueue()
+        self._use_threshold = True
         self._answered_count = 0
         self._today_count = 0
         self._today_start = day_start()
@@ -482,11 +484,13 @@ class PracticeScreen(BaseScreen):
         queue: PracticeQueue,
         waiting: PracticeQueue,
         today_count: int,
+        use_threshold: bool,
     ) -> None:
         """Init worker finished — install both queues and show the first card."""
         self._predictor = predictor
         self._queue = queue
         self._waiting = waiting
+        self._use_threshold = use_threshold
         self._today_count = today_count
         self._show_current()
 
@@ -513,7 +517,10 @@ class PracticeScreen(BaseScreen):
         # due times are now stale.
         self._app.invalidate_due_cache()
 
-        if next_ts is None:
+        if not self._use_threshold:
+            # Without a threshold there is no due time — words compete on gain.
+            self._next_var.set("")
+        elif next_ts is None:
             self._next_var.set("next repetition: —  (no estimator)")
         else:
             delta = next_ts - int(time.time())
@@ -550,8 +557,12 @@ class PracticeScreen(BaseScreen):
                 self._queue.push(refreshed, -refreshed.score, TIER_REVIEW)
             else:
                 # Due in the future — park it in the waiting heap so it can be
-                # promoted back if it comes due before the session ends.
-                self._waiting.push(refreshed, next_ts)
+                # promoted back if it comes due before the session ends; without
+                # the threshold it competes on its gain straight away instead.
+                refreshed.score = card_gain(refreshed, now)
+                park_not_due(
+                    self._queue, self._waiting, refreshed, next_ts, self._use_threshold
+                )
 
         self._set_state(PracticeState.RESULT)
 
