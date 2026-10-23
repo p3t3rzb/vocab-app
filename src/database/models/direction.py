@@ -1,4 +1,5 @@
 """Direction enum — which way a (word, repetition) pair is being practiced."""
+
 import enum
 
 

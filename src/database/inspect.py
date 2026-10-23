@@ -6,6 +6,7 @@ The home screen and the settings recalc worker both need to glance at every
 raw :mod:`sqlite3` connection, run one query, and return ``None`` / ``0`` on
 any failure so callers can skip unreadable or unrelated files.
 """
+
 from __future__ import annotations
 
 import sqlite3

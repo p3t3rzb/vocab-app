@@ -3,6 +3,7 @@
 Kept separate from :mod:`src.gui.db_select` so the screen file is just the
 two screen / dialog classes. None of these helpers touch Tk widgets.
 """
+
 from __future__ import annotations
 
 import re

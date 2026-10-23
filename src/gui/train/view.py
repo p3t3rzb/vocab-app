@@ -5,6 +5,7 @@ recalc), a third for deleting the checkpoint, plus a :class:`LossPlot`.
 The view decides which controls are enabled in each phase; the plot owns
 its own matplotlib figure; the workers contain no Tk imports.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -84,12 +85,17 @@ class TrainScreen(BaseScreen):
             on_back=self._go_back,
         )
         header.grid(
-            row=0, column=0, sticky="ew",
-            padx=Spacing.SCREEN_PAD_X, pady=Spacing.SCREEN_PAD_Y,
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=Spacing.SCREEN_PAD_X,
+            pady=Spacing.SCREEN_PAD_Y,
         )
 
         plot_frame = ctk.CTkFrame(self, fg_color="transparent")
-        plot_frame.grid(row=1, column=0, sticky="nsew", padx=Spacing.SCREEN_PAD_X, pady=(4, 4))
+        plot_frame.grid(
+            row=1, column=0, sticky="nsew", padx=Spacing.SCREEN_PAD_X, pady=(4, 4)
+        )
         plot_frame.grid_rowconfigure(0, weight=1)
         plot_frame.grid_columnconfigure(0, weight=1)
         # The rendered image would otherwise set the label's requested size,
@@ -99,13 +105,17 @@ class TrainScreen(BaseScreen):
         self._plot_label = tk.Label(plot_frame, borderwidth=0, bg=Colors.PLOT_DARK_BG)
         self._plot_label.grid(row=0, column=0, sticky="nsew")
 
-        self._status_var = ctk.StringVar(value="Ready. Set epoch count and press Train.")
+        self._status_var = ctk.StringVar(
+            value="Ready. Set epoch count and press Train."
+        )
         ctk.CTkLabel(
             self, textvariable=self._status_var, font=ctk.CTkFont(**Fonts.SMALL)
         ).grid(row=2, column=0, sticky="ew", padx=Spacing.SCREEN_PAD_X, pady=(2, 2))
 
         self._progress = ctk.CTkProgressBar(self, mode="indeterminate")
-        self._progress.grid(row=3, column=0, sticky="ew", padx=Spacing.SCREEN_PAD_X, pady=(0, 4))
+        self._progress.grid(
+            row=3, column=0, sticky="ew", padx=Spacing.SCREEN_PAD_X, pady=(0, 4)
+        )
         self._progress.set(0)
 
         ctrl = ctk.CTkFrame(self, fg_color="transparent")
@@ -118,12 +128,17 @@ class TrainScreen(BaseScreen):
 
         self._fixed_ceiling_var = ctk.BooleanVar(value=False)
         self._fixed_ceiling_check = ctk.CTkCheckBox(
-            ctrl, text="Fix p0 = 1", variable=self._fixed_ceiling_var,
+            ctrl,
+            text="Fix p0 = 1",
+            variable=self._fixed_ceiling_var,
         )
         self._fixed_ceiling_check.pack(side="left", padx=(0, 20))
 
         self._btn_train = ctk.CTkButton(
-            ctrl, text="Train", width=100, command=self._start_training,
+            ctrl,
+            text="Train",
+            width=100,
+            command=self._start_training,
         )
         self._btn_train.pack(side="left", padx=6)
 
@@ -171,7 +186,9 @@ class TrainScreen(BaseScreen):
                 raise ValueError
         except ValueError:
             messagebox.showwarning(
-                "Invalid input", "Epochs must be a positive integer.", parent=self,
+                "Invalid input",
+                "Epochs must be a positive integer.",
+                parent=self,
             )
             return
 
@@ -226,7 +243,9 @@ class TrainScreen(BaseScreen):
 
         self._schedule_job.start(
             schedule_worker,
-            Path(checkpoint_path), self._schedule_job.queue, self._schedule_job.stop_event,
+            Path(checkpoint_path),
+            self._schedule_job.queue,
+            self._schedule_job.stop_event,
         )
 
     def _on_training_cancelled(self) -> None:
@@ -291,7 +310,9 @@ class TrainScreen(BaseScreen):
         self._progress.start()
 
         self._delete_job.start(
-            delete_model_worker, self._ctx, self._delete_job.queue,
+            delete_model_worker,
+            self._ctx,
+            self._delete_job.queue,
         )
 
     def _on_delete_done(self, count: int) -> None:

@@ -28,6 +28,7 @@ Everything derived from these curves — recall score, next-review time, queue
 score — is computed *live* (see :mod:`src.model.curve`), so the recall threshold
 can change without recomputing anything here.
 """
+
 from __future__ import annotations
 
 import threading
@@ -99,7 +100,9 @@ class ParamScheduler:
             chunk = word_ids[chunk_start : chunk_start + chunk_size]
             # Histories are read per chunk, never the whole table at once.
             with get_session() as session:
-                reps_map = RepetitionRepository(session).history_by_word_direction(chunk)
+                reps_map = RepetitionRepository(session).history_by_word_direction(
+                    chunk
+                )
             chunk_updates = self._process_chunk(chunk, reps_map, now)
 
             if chunk_updates:

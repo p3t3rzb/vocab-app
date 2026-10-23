@@ -1,10 +1,17 @@
 """Human-readable duration and timestamp strings."""
+
 import time
 from datetime import datetime
 
 import pytest
 
-from src.gui.formatting import day_start, format_due, format_future, format_past, format_timestamp
+from src.gui.formatting import (
+    day_start,
+    format_due,
+    format_future,
+    format_past,
+    format_timestamp,
+)
 
 M, H, D = 60, 3600, 86_400
 

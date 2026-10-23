@@ -5,6 +5,7 @@ Every screen consumes :func:`build_header` for its top bar and
 keeps colours consistent with the surrounding customtkinter widgets in
 both light and dark mode.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -54,9 +55,7 @@ class ScreenHeader(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=1)
 
         if on_back is not None:
-            back_button = ctk.CTkButton(
-                self, text="← Back", width=80, command=on_back
-            )
+            back_button = ctk.CTkButton(self, text="← Back", width=80, command=on_back)
             back_button.grid(row=0, column=0, sticky="w")
 
         self.title_label = ctk.CTkLabel(
@@ -143,7 +142,7 @@ class TreeSorter:
     heading is clicked.
     """
 
-    ASCENDING = " ▴"   # ▴
+    ASCENDING = " ▴"  # ▴
     DESCENDING = " ▾"  # ▾
 
     def __init__(

@@ -1,4 +1,5 @@
 """Session queue construction from the curves stored on ``words``."""
+
 import math
 
 import pytest
@@ -23,17 +24,24 @@ CFG = PredictConfig(recall_threshold=0.8, max_delta_seconds=math.inf)
 def curves(prefix: str, tau: float, ceiling: float = 1.0) -> dict:
     """Current + post-review curve columns for one direction."""
     return {
-        f"{prefix}_tau": tau, f"{prefix}_ceiling": ceiling,
-        f"{prefix}_ok_tau": 10 * tau, f"{prefix}_ok_ceiling": ceiling,
-        f"{prefix}_no_tau": tau / 10, f"{prefix}_no_ceiling": ceiling,
+        f"{prefix}_tau": tau,
+        f"{prefix}_ceiling": ceiling,
+        f"{prefix}_ok_tau": 10 * tau,
+        f"{prefix}_ok_ceiling": ceiling,
+        f"{prefix}_no_tau": tau / 10,
+        f"{prefix}_no_ceiling": ceiling,
     }
 
 
 def learned(source: str, tau: float, **extra) -> int:
     """A word learned in both directions at T0 with the same curve each way."""
     return add_word(
-        source, source.upper(), {F: [(T0, True)], R: [(T0, True)]},
-        **curves("fwd", tau), **curves("rev", tau), **extra,
+        source,
+        source.upper(),
+        {F: [(T0, True)], R: [(T0, True)]},
+        **curves("fwd", tau),
+        **curves("rev", tau),
+        **extra,
     )
 
 
@@ -62,7 +70,9 @@ def test_not_due_cards_wait_keyed_by_due_time(db):
     learned("fresh", 100 * DAY)
     queue, waiting = build_queue(NOW, CFG)
     assert len(queue) == 0 and len(waiting) == 2
-    assert waiting.peek_priority() == T0 + int(invert_curve(100 * DAY, 0.8, math.inf, 1.0))
+    assert waiting.peek_priority() == T0 + int(
+        invert_curve(100 * DAY, 0.8, math.inf, 1.0)
+    )
 
 
 def test_without_threshold_not_due_cards_compete_on_gain(db):
@@ -113,7 +123,9 @@ def test_gain_only_ordering_scores_new_cards_in_review_tier(db):
     prio = add_word("prio", "P", priority=True)
     plain = add_word("plain", "N")
     new_curves = {d: (Curve(1e9, 0.9), Curve(1e3, 0.5)) for d in Direction}
-    entries = drain(build_queue(NOW, CFG, new_card_curves=new_curves, first_success=0.6)[0])
+    entries = drain(
+        build_queue(NOW, CFG, new_card_curves=new_curves, first_success=0.6)[0]
+    )
 
     assert {t for t, _, _ in entries} == {TIER_REVIEW}
     new = [c for _, _, c in entries if c.last_practiced is None]

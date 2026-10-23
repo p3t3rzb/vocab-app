@@ -13,6 +13,7 @@ The train/val split is done in **time**: every rep after one cutoff date is held
 out (see :func:`split_by_time`), which is what a refit faces — learn from
 everything so far, then predict what comes next.
 """
+
 from __future__ import annotations
 
 import math
@@ -48,7 +49,7 @@ class Sequence:
     direction: Direction
     source_text: str
     target_text: str
-    inputs: torch.Tensor   # (L, 5)  [log_delta, prev_rem, prev_not_rem, is_fwd, is_rev]
+    inputs: torch.Tensor  # (L, 5)  [log_delta, prev_rem, prev_not_rem, is_fwd, is_rev]
     targets: torch.Tensor  # (L,)    remembered at each step
     practiced_at: torch.Tensor  # (L,)  unix time of each target rep
     scored_from: int = 0
@@ -71,7 +72,9 @@ class Sequence:
         for i in range(1, len(reps)):
             delta = reps[i].practiced_at - reps[i - 1].practiced_at
             prev_rem = float(reps[i - 1].remembered)
-            inputs.append([math.log(delta + 1), prev_rem, 1.0 - prev_rem, is_fwd, is_rev])
+            inputs.append(
+                [math.log(delta + 1), prev_rem, 1.0 - prev_rem, is_fwd, is_rev]
+            )
             targets.append(float(reps[i].remembered))
 
         return cls(

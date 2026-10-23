@@ -1,9 +1,12 @@
 """Masked binary cross-entropy for variable-length sequences."""
+
 import torch
 import torch.nn as nn
 
 
-def masked_bce(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+def masked_bce(
+    pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor
+) -> torch.Tensor:
     """Summed binary cross-entropy over the steps ``mask`` selects.
 
     ``mask`` drops padding and, for validation, the history steps before the

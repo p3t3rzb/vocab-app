@@ -4,6 +4,7 @@ Pass ``word=None`` to create a new word, or an existing :class:`Word`
 to edit it. Newly created words have ``next_rep_*_at`` left ``NULL``;
 the practice queue picks them up via the never-practiced ("new") bucket.
 """
+
 from __future__ import annotations
 
 from tkinter import messagebox
@@ -65,11 +66,15 @@ class WordEditDialog(BaseDialog):
         flags.grid(row=2, column=1, padx=(0, 20), pady=6, sticky="w")
         self._priority_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            flags, text="Priority", variable=self._priority_var,
+            flags,
+            text="Priority",
+            variable=self._priority_var,
         ).pack(side="left")
         self._ignored_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(
-            flags, text="Ignored", variable=self._ignored_var,
+            flags,
+            text="Ignored",
+            variable=self._ignored_var,
         ).pack(side="left", padx=(16, 0))
 
         if self._word is not None:
@@ -117,12 +122,14 @@ class WordEditDialog(BaseDialog):
                             parent=self,
                         )
                         return
-                    repo.add(Word(
-                        source_text=src_text,
-                        target_text=tgt_text,
-                        priority=priority,
-                        ignored=ignored,
-                    ))
+                    repo.add(
+                        Word(
+                            source_text=src_text,
+                            target_text=tgt_text,
+                            priority=priority,
+                            ignored=ignored,
+                        )
+                    )
             else:
                 with get_session() as session:
                     word = WordRepository(session).get_by_id(self._word.id)

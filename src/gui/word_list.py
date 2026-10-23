@@ -4,6 +4,7 @@ Also hosts the entry buttons that navigate to the Practice and Train Model
 screens. The treeview shows per-direction due times rendered by
 :func:`format_due`.
 """
+
 from __future__ import annotations
 
 from tkinter import messagebox
@@ -29,7 +30,13 @@ from .base_screen import BaseScreen
 from .formatting import format_due, format_past
 from .model_sync import needs_heuristic_sync, sync_worker
 from .theme import Colors, Fonts, PollIntervals
-from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_header, build_tree
+from .widgets import (
+    ColumnSpec,
+    TreeSorter,
+    apply_treeview_style,
+    build_header,
+    build_tree,
+)
 
 
 def _due_sort_key(ts: int | None) -> tuple[bool, int]:
@@ -88,6 +95,7 @@ def _format_last_revised(ts: int | None) -> str:
         return "–"
     return format_past(max(0, int(time.time()) - ts))
 
+
 if TYPE_CHECKING:
     from .app import App
 
@@ -104,7 +112,10 @@ class WordListScreen(BaseScreen):
         init_db(self._ctx.db_url, self._ctx.src_lang, self._ctx.tgt_lang)
         self._sync_job = BackgroundJob(
             self,
-            handlers={"synced": self._on_params_synced, "sync_error": self._on_sync_error},
+            handlers={
+                "synced": self._on_params_synced,
+                "sync_error": self._on_sync_error,
+            },
             poll_ms=PollIntervals.MS,
         )
         self._load_words()
@@ -121,7 +132,9 @@ class WordListScreen(BaseScreen):
 
         # Header row
         def _add_count(parent: ctk.CTkFrame) -> ctk.CTkLabel:
-            self._count_label = ctk.CTkLabel(parent, text="", font=ctk.CTkFont(**Fonts.SMALL))
+            self._count_label = ctk.CTkLabel(
+                parent, text="", font=ctk.CTkFont(**Fonts.SMALL)
+            )
             self._count_label.grid(row=0, column=2, sticky="e")
             return self._count_label
 
@@ -183,31 +196,58 @@ class WordListScreen(BaseScreen):
         tgt3 = self._ctx.tgt_lang[:3]
         columns = (
             ColumnSpec(
-                "priority", "★", 36, 36, anchor="center",
+                "priority",
+                "★",
+                36,
+                36,
+                anchor="center",
                 sort_key=lambda w: not w.priority,  # priority words first
             ),
             ColumnSpec(
-                "ignored", "⊘", 36, 36, anchor="center",
+                "ignored",
+                "⊘",
+                36,
+                36,
+                anchor="center",
                 sort_key=lambda w: not w.ignored,  # ignored words first
             ),
             ColumnSpec(
-                "source", self._ctx.src_lang, 240, 100,
+                "source",
+                self._ctx.src_lang,
+                240,
+                100,
                 sort_key=lambda w: w.source_text.lower(),
             ),
             ColumnSpec(
-                "target", self._ctx.tgt_lang, 240, 100,
+                "target",
+                self._ctx.tgt_lang,
+                240,
+                100,
                 sort_key=lambda w: w.target_text.lower(),
             ),
             ColumnSpec(
-                "fwd_due", f"{src3}→{tgt3}", 110, 70,
-                sort_key=lambda w: _due_sort_key(self._due_cache.get(w.id, (None, None))[0]),
+                "fwd_due",
+                f"{src3}→{tgt3}",
+                110,
+                70,
+                sort_key=lambda w: _due_sort_key(
+                    self._due_cache.get(w.id, (None, None))[0]
+                ),
             ),
             ColumnSpec(
-                "rev_due", f"{tgt3}→{src3}", 110, 70,
-                sort_key=lambda w: _due_sort_key(self._due_cache.get(w.id, (None, None))[1]),
+                "rev_due",
+                f"{tgt3}→{src3}",
+                110,
+                70,
+                sort_key=lambda w: _due_sort_key(
+                    self._due_cache.get(w.id, (None, None))[1]
+                ),
             ),
             ColumnSpec(
-                "last_revised", "Last revised", 130, 90,
+                "last_revised",
+                "Last revised",
+                130,
+                90,
                 sort_key=lambda w: _last_revised_sort_key(self._last_revised.get(w.id)),
             ),
         )
@@ -273,7 +313,8 @@ class WordListScreen(BaseScreen):
         query = self._search_var.get().strip().lower()
         if query:
             self._filtered = [
-                w for w in self._all_words
+                w
+                for w in self._all_words
                 if query in w.source_text.lower() or query in w.target_text.lower()
             ]
         else:
@@ -285,7 +326,8 @@ class WordListScreen(BaseScreen):
         for word in self._filtered:
             fwd_due, rev_due = self._due_cache.get(word.id, (None, None))
             self._tree.insert(
-                "", "end",
+                "",
+                "end",
                 values=(
                     "★" if word.priority else "",
                     "⊘" if word.ignored else "",
@@ -338,6 +380,7 @@ class WordListScreen(BaseScreen):
     def _add_word(self) -> None:
         """Open the modal "Add word" dialog and reload on close."""
         from .dialogs import WordEditDialog
+
         dialog = WordEditDialog(
             self,
             src_lang=self._ctx.src_lang,
@@ -353,6 +396,7 @@ class WordListScreen(BaseScreen):
         if word is None:
             return
         from .dialogs import WordEditDialog
+
         dialog = WordEditDialog(
             self,
             src_lang=self._ctx.src_lang,

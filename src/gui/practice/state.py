@@ -7,6 +7,7 @@ due yet, and ``DONE`` is the terminal state when there is nothing left to
 offer. ``PracticeState`` holds the states; ``ArrowKey`` is the set of arrow
 keys the screen interprets.
 """
+
 from __future__ import annotations
 
 from enum import Enum

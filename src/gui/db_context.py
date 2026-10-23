@@ -5,6 +5,7 @@ language names. Screens take a single ``ctx`` argument instead of three
 separate fields and obtain the derived ``db_url`` and ``model_path`` from
 the context itself.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass

@@ -7,6 +7,7 @@ Usage:
     uv run python -m src.predict --db storage/databases/french_polish.db --word salut
     uv run python -m src.predict --db storage/databases/french_polish.db --word salut --history
 """
+
 from __future__ import annotations
 
 import argparse
@@ -57,7 +58,11 @@ def _predict_for_direction(
         return
 
     dir_label = "FORWARD" if direction == Direction.FORWARD else "REVERSE"
-    arrow = f"{source_text} → {target_text}" if direction == Direction.FORWARD else f"{target_text} → {source_text}"
+    arrow = (
+        f"{source_text} → {target_text}"
+        if direction == Direction.FORWARD
+        else f"{target_text} → {source_text}"
+    )
     print(f"\n{'─' * 60}")
     print(f"  {arrow}  [{dir_label}]")
     print(f"{'─' * 60}")
@@ -66,7 +71,9 @@ def _predict_for_direction(
     last_rep = reps[-1]
     last_dt = datetime.fromtimestamp(last_rep.practiced_at)
     elapsed = time.time() - last_rep.practiced_at
-    print(f"  Last practiced: {last_dt.strftime('%Y-%m-%d %H:%M')}  ({_fmt_duration(elapsed)} ago)")
+    print(
+        f"  Last practiced: {last_dt.strftime('%Y-%m-%d %H:%M')}  ({_fmt_duration(elapsed)} ago)"
+    )
 
     p_now = predictor.recall_probability(reps, elapsed, direction)
     print(f"  P(recall now):  {p_now:.3f}")
@@ -80,8 +87,10 @@ def _predict_for_direction(
     if show_history and len(reps) >= 3:
         cfg = predictor.config
         print(f"\n  History (threshold={cfg.recall_threshold}):")
-        print(f"  {'#':>3}  {'Predicted':>12}  {'Actual':>12}  {'P@actual':>10}  {'Remembered'}")
-        print(f"  {'─'*3}  {'─'*12}  {'─'*12}  {'─'*10}  {'─'*10}")
+        print(
+            f"  {'#':>3}  {'Predicted':>12}  {'Actual':>12}  {'P@actual':>10}  {'Remembered'}"
+        )
+        print(f"  {'─' * 3}  {'─' * 12}  {'─' * 12}  {'─' * 10}  {'─' * 10}")
         for i in range(1, len(reps) - 1):
             context = reps[:i]
             pred_delta = predictor.next_repetition_delta(context, direction)
@@ -97,18 +106,28 @@ def _predict_for_direction(
 
 def _parse_args() -> argparse.Namespace:
     """Parse CLI flags for the predict script."""
-    p = argparse.ArgumentParser(description="Predict next repetition time for a vocabulary word")
-    p.add_argument("--db", required=True, help="Path to the SQLite database, e.g. storage/databases/french_polish.db")
+    p = argparse.ArgumentParser(
+        description="Predict next repetition time for a vocabulary word"
+    )
+    p.add_argument(
+        "--db",
+        required=True,
+        help="Path to the SQLite database, e.g. storage/databases/french_polish.db",
+    )
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--word-id", type=int, help="Word ID")
-    group.add_argument("--word", type=str, help="Partial match on source or target text")
+    group.add_argument(
+        "--word", type=str, help="Partial match on source or target text"
+    )
     p.add_argument(
         "--direction",
         choices=["forward", "reverse", "both"],
         default="both",
         help="Which direction to predict (default: both)",
     )
-    p.add_argument("--history", action="store_true", help="Show historical interval comparison")
+    p.add_argument(
+        "--history", action="store_true", help="Show historical interval comparison"
+    )
     return p.parse_args()
 
 
@@ -128,7 +147,11 @@ def main() -> None:
         source_lang = lp.source_language
         target_lang = lp.target_language
 
-        ckpt_path = Path("storage") / "models" / f"{source_lang.lower()}_{target_lang.lower()}.pt"
+        ckpt_path = (
+            Path("storage")
+            / "models"
+            / f"{source_lang.lower()}_{target_lang.lower()}.pt"
+        )
 
         words_repo = WordRepository(session)
 
@@ -142,14 +165,17 @@ def main() -> None:
             query = args.word.lower()
             all_words = words_repo.get_all()
             matches = [
-                w for w in all_words
+                w
+                for w in all_words
                 if query in w.source_text.lower() or query in w.target_text.lower()
             ]
             if not matches:
                 print(f"No words matching '{args.word}'")
                 return
             if len(matches) > 5:
-                print(f"Found {len(matches)} matches — showing first 5. Use --word-id for a specific word.")
+                print(
+                    f"Found {len(matches)} matches — showing first 5. Use --word-id for a specific word."
+                )
                 matches = matches[:5]
 
     predictor: RecallEstimator
@@ -159,7 +185,9 @@ def main() -> None:
         # No checkpoint for this pair yet — fall back to the model-free schedule
         # the practice screen uses, rather than refusing to predict at all.
         print(f"No model checkpoint at {ckpt_path} — using the heuristic schedule.")
-        print("Train a model via the GUI (Word list → Train Model) for real predictions.\n")
+        print(
+            "Train a model via the GUI (Word list → Train Model) for real predictions.\n"
+        )
         predictor = HeuristicPredictor(PredictConfig())
 
     directions: list[Direction] = []

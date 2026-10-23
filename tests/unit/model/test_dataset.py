@@ -1,4 +1,5 @@
 """Training sequences and the time-based train/val split."""
+
 import math
 
 import pytest
@@ -95,6 +96,8 @@ class TestSplitByTime:
         seqs = [seq(i, [T0 + j * DAY * i for j in range(5)]) for i in range(1, 5)]
         train, val = split_by_time(seqs, val_split=0.4)
         total = sum(len(s.targets) for s in seqs)
-        assert sum(len(s.targets) for s in train) + sum(
-            len(s.targets) - s.scored_from for s in val
-        ) == total
+        assert (
+            sum(len(s.targets) for s in train)
+            + sum(len(s.targets) - s.scored_from for s in val)
+            == total
+        )

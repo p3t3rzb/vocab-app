@@ -1,4 +1,5 @@
 """Input-row construction shared by every inference path."""
+
 import math
 
 import pytest
@@ -9,7 +10,13 @@ from tests.factories import DAY, T0, make_reps
 
 
 def test_rep_row_layout_forward_remembered():
-    assert rep_row(DAY, True, Direction.FORWARD) == [math.log(DAY + 1), 1.0, 0.0, 1.0, 0.0]
+    assert rep_row(DAY, True, Direction.FORWARD) == [
+        math.log(DAY + 1),
+        1.0,
+        0.0,
+        1.0,
+        0.0,
+    ]
 
 
 def test_rep_row_layout_reverse_forgotten():

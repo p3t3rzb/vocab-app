@@ -5,6 +5,7 @@ persists the settings, applies the appearance mode, and invalidates the word
 list's due-time cache — the recall threshold / max interval are applied *live*
 from the stored time constants, so no model recompute is needed.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -42,8 +43,11 @@ class SettingsScreen(BaseScreen):
 
         header = build_header(self, title="Settings", on_back=self._go_back)
         header.grid(
-            row=0, column=0, sticky="ew",
-            padx=Spacing.SCREEN_PAD_X, pady=Spacing.SCREEN_PAD_Y,
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=Spacing.SCREEN_PAD_X,
+            pady=Spacing.SCREEN_PAD_Y,
         )
 
         body = ctk.CTkFrame(self, fg_color="transparent")
@@ -57,19 +61,27 @@ class SettingsScreen(BaseScreen):
 
         self._status_var = ctk.StringVar(value="")
         ctk.CTkLabel(
-            self, textvariable=self._status_var, font=ctk.CTkFont(**Fonts.SMALL),
+            self,
+            textvariable=self._status_var,
+            font=ctk.CTkFont(**Fonts.SMALL),
         ).grid(row=2, column=0, sticky="ew", padx=Spacing.SCREEN_PAD_X, pady=(2, 2))
 
         btns = ctk.CTkFrame(self, fg_color="transparent")
         btns.grid(row=3, column=0, pady=(8, 16))
 
         self._btn_cancel = ctk.CTkButton(
-            btns, text="Cancel", width=100, command=self._go_back,
+            btns,
+            text="Cancel",
+            width=100,
+            command=self._go_back,
         )
         self._btn_cancel.pack(side="left", padx=6)
 
         self._btn_save = ctk.CTkButton(
-            btns, text="Save", width=100, command=self._on_save,
+            btns,
+            text="Save",
+            width=100,
+            command=self._on_save,
         )
         self._btn_save.pack(side="left", padx=6)
 

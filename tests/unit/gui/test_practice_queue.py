@@ -1,4 +1,5 @@
 """Practice-queue primitives that don't need a database: the heap, scoring, refresh and drain."""
+
 import pytest
 
 from src.database import Direction
@@ -128,7 +129,9 @@ def test_drain_waiting_rescores_into_extra_tier():
     assert len(waiting) == 0
     assert q.pop().word_id == 99
     rest = [q.pop() for _ in range(3)]
-    assert [c.score for c in rest] == sorted((card_gain(c, now) for c in rest), reverse=True)
+    assert [c.score for c in rest] == sorted(
+        (card_gain(c, now) for c in rest), reverse=True
+    )
     entries = [(TIER_EXTRA, -c.score) for c in rest]
     assert entries == sorted(entries)
 
@@ -158,7 +161,9 @@ def test_refresh_top_limits_to_k():
     for i in range(5):
         q.push(card(i), float(i))
     seen = []
-    refresh_top(q, T0 + DAY, lambda cards, now: seen.extend(c.word_id for c in cards), k=2)
+    refresh_top(
+        q, T0 + DAY, lambda cards, now: seen.extend(c.word_id for c in cards), k=2
+    )
     assert seen == [0, 1]
     assert len(q) == 5
 

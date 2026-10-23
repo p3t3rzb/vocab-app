@@ -12,6 +12,7 @@ Public surface:
 * :func:`read_language_pair`, :func:`count_words` — read-only ``sqlite3``
   peek helpers for browsing many databases without touching the global engine.
 """
+
 from .inspect import count_words, read_language_pair
 from .models import Direction, LanguagePair, Repetition, Word
 from .repositories import (

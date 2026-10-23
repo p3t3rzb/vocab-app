@@ -6,6 +6,7 @@ currently visible frame, the active :class:`DbContext`, and exposes one
 instantiates the new one. Screen imports are deferred so the import graph
 stays free of cycles and startup remains cheap.
 """
+
 from __future__ import annotations
 
 import math
@@ -113,7 +114,9 @@ class App(ctk.CTk):
             return
         if self._rescale_after_id is not None:
             self.after_cancel(self._rescale_after_id)
-        self._rescale_after_id = self.after(WindowSizes.RESCALE_DEBOUNCE_MS, self._rescale)
+        self._rescale_after_id = self.after(
+            WindowSizes.RESCALE_DEBOUNCE_MS, self._rescale
+        )
 
     def _rescale(self) -> None:
         """Shrink the UI proportionally once the window is smaller than ``MAIN_MIN``.
@@ -161,7 +164,9 @@ class App(ctk.CTk):
         for child in widget.winfo_children():
             if isinstance(child, ctk.CTkBaseClass):
                 child._update_dimensions_event(
-                    SimpleNamespace(width=child.winfo_width(), height=child.winfo_height())
+                    SimpleNamespace(
+                        width=child.winfo_width(), height=child.winfo_height()
+                    )
                 )
             self._resync_widget_sizes(child)
 
@@ -182,17 +187,20 @@ class App(ctk.CTk):
     def show_db_select(self) -> None:
         """Display the database-selection screen (the app's home view)."""
         from .db_select import DatabaseSelectScreen
+
         self._swap(DatabaseSelectScreen(self))
 
     def show_word_list(self, ctx: DbContext) -> None:
         """Open ``ctx`` and display its word list."""
         self.set_ctx(ctx)
         from .word_list import WordListScreen
+
         self._swap(WordListScreen(self))
 
     def show_word_detail(self, word_id: int) -> None:
         """Display the repetition history for a single word."""
         from .word_detail import WordDetailScreen
+
         self._swap(WordDetailScreen(self, word_id))
 
     def back_to_word_list(self) -> None:
@@ -203,15 +211,18 @@ class App(ctk.CTk):
         """Display the model-training screen for ``ctx``."""
         self.set_ctx(ctx)
         from .train import TrainScreen
+
         self._swap(TrainScreen(self))
 
     def show_practice_screen(self, ctx: DbContext) -> None:
         """Enter the spaced-repetition practice session for ``ctx``."""
         self.set_ctx(ctx)
         from .practice import PracticeScreen
+
         self._swap(PracticeScreen(self))
 
     def show_settings(self) -> None:
         """Display the global settings screen."""
         from .settings import SettingsScreen
+
         self._swap(SettingsScreen(self))

@@ -5,6 +5,7 @@ rendered to a PNG byte buffer and decoded by ``tk.PhotoImage`` — avoiding
 the TkAgg C extension so the plot works with the pure-Python Tcl/Tk that
 ships with uv.
 """
+
 from __future__ import annotations
 
 import base64
@@ -62,10 +63,18 @@ class LossPlot:
         for spine in self._ax.spines.values():
             spine.set_edgecolor(text_c)
         (self._line_train,) = self._ax.plot(
-            [], [], color=Colors.PLOT_TRAIN_LINE, label="Train loss", linewidth=2,
+            [],
+            [],
+            color=Colors.PLOT_TRAIN_LINE,
+            label="Train loss",
+            linewidth=2,
         )
         (self._line_val,) = self._ax.plot(
-            [], [], color=Colors.PLOT_VAL_LINE, label="Val loss", linewidth=2,
+            [],
+            [],
+            color=Colors.PLOT_VAL_LINE,
+            label="Val loss",
+            linewidth=2,
         )
         self._ax.legend(facecolor=ax_bg, labelcolor=text_c)
         self._fig.tight_layout()

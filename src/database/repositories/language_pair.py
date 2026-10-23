@@ -1,4 +1,5 @@
 """Read access for the single-row ``language_pair`` table."""
+
 from sqlalchemy import select
 
 from ..models import LanguagePair

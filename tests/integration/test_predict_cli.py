@@ -1,4 +1,5 @@
 """Smoke test for ``python -m src.predict`` without a checkpoint (heuristic fallback)."""
+
 import sys
 
 import pytest
@@ -22,7 +23,11 @@ def run(db, tmp_path, monkeypatch, capsys):
 
 
 def test_word_lookup_with_history(run):
-    add_word("chat", "kot", {Direction.FORWARD: [(T0, True), (T0 + DAY, True), (T0 + 4 * DAY, False)]})
+    add_word(
+        "chat",
+        "kot",
+        {Direction.FORWARD: [(T0, True), (T0 + DAY, True), (T0 + 4 * DAY, False)]},
+    )
     out = run("--word", "cha", "--history")
     assert "heuristic schedule" in out
     assert "chat → kot" in out

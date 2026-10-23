@@ -1,10 +1,17 @@
 """The network, its checkpoint round-trip, and the batched final-step forward."""
+
 import pytest
 import torch
 
 from src.database import Direction
 from src.model.checkpoint import load_model, save_checkpoint
-from src.model.curve import CEILING_INIT, HEAD_OUTPUTS, LOG_TAU_INIT, curve_from, recall_at
+from src.model.curve import (
+    CEILING_INIT,
+    HEAD_OUTPUTS,
+    LOG_TAU_INIT,
+    curve_from,
+    recall_at,
+)
 from src.model.features import history_rows
 from src.model.inference import Predictor
 from src.model.inference.batch import final_step_curves
@@ -19,7 +26,9 @@ class TestRecallLSTM:
     def test_head_bias_initialisation(self):
         model = RecallLSTM(hidden_size=4, num_layers=1)
         assert model.head.bias[0].item() == pytest.approx(LOG_TAU_INIT)
-        assert torch.sigmoid(model.head.bias[1]).item() == pytest.approx(CEILING_INIT, abs=1e-6)
+        assert torch.sigmoid(model.head.bias[1]).item() == pytest.approx(
+            CEILING_INIT, abs=1e-6
+        )
 
     def test_fixed_ceiling_pins_p0_to_one(self):
         torch.manual_seed(0)
@@ -50,13 +59,20 @@ class TestCheckpoint:
             assert torch.allclose(loaded(x), tiny_model(x))
         assert not loaded.training
 
-    def test_single_channel_checkpoint_is_widened_to_no_ceiling(self, tiny_model, tmp_path):
+    def test_single_channel_checkpoint_is_widened_to_no_ceiling(
+        self, tiny_model, tmp_path
+    ):
         state = tiny_model.state_dict()
         state["head.weight"] = state["head.weight"][:1].clone()
         state["head.bias"] = state["head.bias"][:1].clone()
         path = tmp_path / "old.pt"
         torch.save(
-            {"state_dict": state, "hyperparams": tiny_model.hyperparams(), "val_loss": 0.0, "epoch": 0},
+            {
+                "state_dict": state,
+                "hyperparams": tiny_model.hyperparams(),
+                "val_loss": 0.0,
+                "epoch": 0,
+            },
             path,
         )
         loaded = load_model(path, torch.device("cpu"))
@@ -70,7 +86,10 @@ class TestCheckpoint:
 class TestBatchedForward:
     def histories(self):
         return [
-            history_rows(make_reps([(T0 + i * DAY, i % 2 == 0) for i in range(n)]), Direction.FORWARD)
+            history_rows(
+                make_reps([(T0 + i * DAY, i % 2 == 0) for i in range(n)]),
+                Direction.FORWARD,
+            )
             for n in (5, 1, 3, 8, 2)
         ]
 
@@ -113,5 +132,7 @@ class TestPredictor:
             assert got.ceiling == pytest.approx(want.ceiling, rel=1e-4)
 
     def test_post_rep_curves_accepts_empty_history(self, tiny_model):
-        [(ok, no)] = Predictor(tiny_model).post_rep_curves([([], Direction.REVERSE)], T0)
+        [(ok, no)] = Predictor(tiny_model).post_rep_curves(
+            [([], Direction.REVERSE)], T0
+        )
         assert ok.tau > 0 and no.tau > 0

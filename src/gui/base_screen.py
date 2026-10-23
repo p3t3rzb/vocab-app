@@ -8,6 +8,7 @@ declare empty ``on_show`` / ``on_destroy`` methods would be cargo cult.
 Subclasses must call ``super().__init__(app)`` and may then access
 ``self._app`` and (if a database has been opened) ``self._ctx``.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

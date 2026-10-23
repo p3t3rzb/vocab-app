@@ -1,4 +1,5 @@
 """Inference: per-word predictions and batched param computation."""
+
 from .heuristic import HeuristicPredictor
 from .predictor import Predictor
 from .scheduler import (

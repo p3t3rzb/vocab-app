@@ -1,4 +1,5 @@
 """LanguagePair model — single-row table identifying the database's languages."""
+
 from sqlalchemy import Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 

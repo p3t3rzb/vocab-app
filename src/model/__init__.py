@@ -23,6 +23,7 @@ Public surface:
 * :data:`NO_CEILING` — the curve ceiling ``p0 = 1`` assumed by a caller that has
   none to pass, i.e. the single-parameter family this one generalises.
 """
+
 from .checkpoint import load_model
 from .config import (
     HeuristicConfig,

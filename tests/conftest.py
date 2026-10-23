@@ -9,6 +9,7 @@ Layout:
 Nothing here ever touches ``storage/``: databases, checkpoints and the settings
 file are all redirected into pytest's ``tmp_path``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

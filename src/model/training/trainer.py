@@ -1,4 +1,5 @@
 """Train a :class:`RecallLSTM` on a database's repetition history."""
+
 from __future__ import annotations
 
 import math
@@ -123,7 +124,9 @@ class Trainer:
         lrs: list[float] = []  # learning rate each epoch trained at, for the refit
 
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=cfg.lr_patience, factor=cfg.lr_factor,
+            optimizer,
+            patience=cfg.lr_patience,
+            factor=cfg.lr_factor,
         )
 
         print(f"\n{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'LR':>10}")
@@ -135,16 +138,28 @@ class Trainer:
 
             lrs.append(optimizer.param_groups[0]["lr"])
             tr_loss = self._run_epoch(
-                model, tr_inputs, tr_targets, tr_lengths, tr_starts, optimizer,
+                model,
+                tr_inputs,
+                tr_targets,
+                tr_lengths,
+                tr_starts,
+                optimizer,
             )
             vl_loss = self._run_epoch(
-                model, vl_inputs, vl_targets, vl_lengths, vl_starts, None,
+                model,
+                vl_inputs,
+                vl_targets,
+                vl_lengths,
+                vl_starts,
+                None,
             )
             scheduler.step(vl_loss)
 
             lr_now = optimizer.param_groups[0]["lr"]
             marker = " *" if vl_loss < best_val else ""
-            print(f"{epoch + 1:>6}  {tr_loss:>10.5f}  {vl_loss:>10.5f}  {lr_now:>10.2e}{marker}")
+            print(
+                f"{epoch + 1:>6}  {tr_loss:>10.5f}  {vl_loss:>10.5f}  {lr_now:>10.2e}{marker}"
+            )
 
             if on_epoch is not None:
                 on_epoch(epoch + 1, tr_loss, vl_loss)
@@ -156,7 +171,9 @@ class Trainer:
 
         stopped_early = stop_event is not None and stop_event.is_set()
         if stopped_early:
-            print(f"\nTraining stopped early. Best val loss {best_val:.5f} at epoch {best_epoch + 1}")
+            print(
+                f"\nTraining stopped early. Best val loss {best_val:.5f} at epoch {best_epoch + 1}"
+            )
         else:
             print(f"\nBest val loss {best_val:.5f} at epoch {best_epoch + 1}")
         self._report_ceilings(ckpt_path, vl_inputs, vl_lengths, vl_starts)
@@ -166,8 +183,13 @@ class Trainer:
             del tr_inputs, tr_targets, tr_lengths, tr_starts
             del vl_inputs, vl_targets, vl_lengths, vl_starts
             self._refit(
-                all_seqs, lrs[: best_epoch + 1], ckpt_path, best_val, best_epoch,
-                on_refit_epoch, stop_event,
+                all_seqs,
+                lrs[: best_epoch + 1],
+                ckpt_path,
+                best_val,
+                best_epoch,
+                on_refit_epoch,
+                stop_event,
             )
         print(f"Checkpoint saved → {ckpt_path}")
 
@@ -189,7 +211,9 @@ class Trainer:
             fixed_ceiling=cfg.fixed_ceiling,
         ).to(self._device)
         optimizer = torch.optim.Adam(
-            model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay,
+            model.parameters(),
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay,
         )
         return model, optimizer
 
@@ -369,7 +393,8 @@ class Trainer:
                     optimizer.zero_grad()
                     (loss_sum / reps_per_batch).backward()
                     nn.utils.clip_grad_norm_(
-                        model.parameters(), max_norm=self._cfg.grad_clip_max_norm,
+                        model.parameters(),
+                        max_norm=self._cfg.grad_clip_max_norm,
                     )
                     optimizer.step()
 
@@ -390,5 +415,7 @@ def train(
     the trainer; this function does not take a ``db_url`` itself.
     """
     return Trainer(config or TrainConfig()).run(
-        on_epoch=on_epoch, stop_event=stop_event, on_refit_epoch=on_refit_epoch,
+        on_epoch=on_epoch,
+        stop_event=stop_event,
+        on_refit_epoch=on_refit_epoch,
     )

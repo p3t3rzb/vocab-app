@@ -16,6 +16,7 @@ curves (~7 s on the French database), so it is done at most once per database
 per app run. ``_source`` tracks what last wrote the params so that a checkpoint
 deleted *after* a training run still triggers a fresh recompute.
 """
+
 from __future__ import annotations
 
 import queue as queue_module

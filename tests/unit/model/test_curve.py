@@ -1,4 +1,5 @@
 """Forgetting-curve math: activation, evaluation, inversion and the gain integrals."""
+
 import math
 
 import pytest
@@ -34,16 +35,22 @@ def raw(log_tau: float, logit: float) -> torch.Tensor:
 
 class TestActivation:
     def test_time_constant_is_exp_of_channel_zero(self):
-        assert time_constant(raw(math.log(DAY), 0.0)).item() == pytest.approx(DAY, rel=1e-5)
+        assert time_constant(raw(math.log(DAY), 0.0)).item() == pytest.approx(
+            DAY, rel=1e-5
+        )
 
     def test_time_constant_clamps_extreme_raw_output(self):
         assert math.isfinite(time_constant(raw(1e6, 0.0)).item())
-        assert time_constant(raw(1e6, 0.0)).item() == pytest.approx(math.exp(LOG_TAU_MAX), rel=1e-5)
+        assert time_constant(raw(1e6, 0.0)).item() == pytest.approx(
+            math.exp(LOG_TAU_MAX), rel=1e-5
+        )
         assert time_constant(raw(-1e6, 0.0)).item() > 0.0
 
     def test_ceiling_is_sigmoid_of_channel_one(self):
         assert ceiling(raw(0.0, 0.0)).item() == pytest.approx(0.5)
-        assert ceiling(raw(0.0, CEILING_LOGIT_INIT)).item() == pytest.approx(0.98, abs=1e-6)
+        assert ceiling(raw(0.0, CEILING_LOGIT_INIT)).item() == pytest.approx(
+            0.98, abs=1e-6
+        )
 
     def test_ceiling_stays_strictly_inside_unit_interval(self):
         assert 0.0 < ceiling(raw(0.0, -1e6)).item()
@@ -136,7 +143,9 @@ class TestIntegrals:
         tau, p0, s = 3.0, 0.6, 2.0
         dt = 1e-3
         tail = sum(p0 * math.exp(-(s + i * dt) / tau) * dt for i in range(int(60 / dt)))
-        assert remaining_seconds(recall_at(tau, s, p0), tau) == pytest.approx(tail, rel=1e-3)
+        assert remaining_seconds(recall_at(tau, s, p0), tau) == pytest.approx(
+            tail, rel=1e-3
+        )
 
     def test_expected_retained_weights_branches_by_recall(self):
         ok, no = Curve(10 * DAY, 0.9), Curve(DAY, 0.4)
@@ -156,4 +165,6 @@ class TestIntegrals:
 
     def test_expected_gain_can_be_negative(self):
         # A long-lived card at high recall, risking a failure curve that is far shorter.
-        assert expected_gain(0.95, 100 * DAY, Curve(101 * DAY, 0.95), Curve(DAY, 0.3)) < 0
+        assert (
+            expected_gain(0.95, 100 * DAY, Curve(101 * DAY, 0.95), Curve(DAY, 0.3)) < 0
+        )

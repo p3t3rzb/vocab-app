@@ -4,6 +4,7 @@ These are plain free functions: no Tk imports, no screen references.
 They communicate with the main thread through a :class:`queue.Queue` that
 the :class:`~src.gui.background.BackgroundJob` polls.
 """
+
 from __future__ import annotations
 
 import queue as queue_module
@@ -104,7 +105,9 @@ def refresh_post_rep_curves(
             (reps_repo.get_for_word(card.word_id, card.direction), card.direction)
             for card in cards
         ]
-    for card, (success, failure) in zip(cards, predictor.post_rep_curves(histories, now)):
+    for card, (success, failure) in zip(
+        cards, predictor.post_rep_curves(histories, now)
+    ):
         card.success, card.failure = success, failure
 
 

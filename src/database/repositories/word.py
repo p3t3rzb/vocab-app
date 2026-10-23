@@ -1,4 +1,5 @@
 """CRUD helpers for :class:`Word`."""
+
 from sqlalchemy import select
 
 from ..models import Word

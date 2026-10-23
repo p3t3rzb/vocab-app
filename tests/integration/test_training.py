@@ -1,4 +1,5 @@
 """End-to-end: train a tiny model on a synthetic deck, then schedule it."""
+
 import random
 
 import pytest
@@ -31,7 +32,9 @@ def synthetic_deck(db):
 
 def test_train_then_compute_params(synthetic_deck, tmp_path):
     epochs, refit = [], []
-    cfg = TrainConfig(epochs=3, hidden_size=8, num_layers=1, batch_size=8, checkpoint_dir=tmp_path)
+    cfg = TrainConfig(
+        epochs=3, hidden_size=8, num_layers=1, batch_size=8, checkpoint_dir=tmp_path
+    )
     path = train(
         cfg,
         on_epoch=lambda e, tr, vl: epochs.append((e, tr, vl)),

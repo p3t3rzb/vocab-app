@@ -1,4 +1,5 @@
 """Batched curve computation persisted onto ``words``: model-based and heuristic."""
+
 import threading
 
 import pytest
@@ -9,18 +10,30 @@ from src.model.checkpoint import save_checkpoint
 from src.model.config import ScheduleConfig
 from src.model.curve import NO_CEILING
 from src.model.dataset import build_sequences
-from src.model.inference import HeuristicPredictor, Predictor, backfill_heuristic_params, compute_all_params
+from src.model.inference import (
+    HeuristicPredictor,
+    Predictor,
+    backfill_heuristic_params,
+    compute_all_params,
+)
 from src.model.inference.scheduler import ParamScheduler
 from tests.factories import DAY, T0, add_word
 
 F, R = Direction.FORWARD, Direction.REVERSE
-CURVE_COLUMNS = [f"{d}{o}_{p}" for d in ("fwd", "rev") for o in ("", "_ok", "_no") for p in ("tau", "ceiling")]
+CURVE_COLUMNS = [
+    f"{d}{o}_{p}"
+    for d in ("fwd", "rev")
+    for o in ("", "_ok", "_no")
+    for p in ("tau", "ceiling")
+]
 
 
 @pytest.fixture
 def deck(db):
     """Three words: both directions practised, forward only, never practised."""
-    both = add_word("chat", "kot", {F: [(T0, True), (T0 + DAY, True)], R: [(T0, False)]})
+    both = add_word(
+        "chat", "kot", {F: [(T0, True), (T0 + DAY, True)], R: [(T0, False)]}
+    )
     fwd = add_word("chien", "pies", {F: [(T0, False), (T0 + 60, True)]})
     new = add_word("oiseau", "ptak")
     return both, fwd, new
@@ -60,7 +73,9 @@ def test_param_scheduler_current_curve_matches_predictor(deck, tiny_model):
 
 def test_param_scheduler_reports_progress(deck, tiny_model):
     calls = []
-    ParamScheduler(tiny_model, ScheduleConfig(chunk_size=2)).run(on_progress=lambda d, t: calls.append((d, t)))
+    ParamScheduler(tiny_model, ScheduleConfig(chunk_size=2)).run(
+        on_progress=lambda d, t: calls.append((d, t))
+    )
     assert calls == [(2, 3), (3, 3)]
 
 
@@ -85,7 +100,9 @@ def test_backfill_heuristic_params(deck):
     w = load(both)
     want = HeuristicPredictor().curve(history(both, F))
     assert w.fwd_tau == pytest.approx(want.tau)
-    assert all(getattr(w, c) == NO_CEILING for c in CURVE_COLUMNS if c.endswith("ceiling"))
+    assert all(
+        getattr(w, c) == NO_CEILING for c in CURVE_COLUMNS if c.endswith("ceiling")
+    )
     assert w.fwd_ok_tau > w.fwd_no_tau
 
     assert load(fwd).rev_tau is None

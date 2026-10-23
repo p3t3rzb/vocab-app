@@ -3,6 +3,7 @@
 Reached from the word list by double-clicking a row. Shows every practice
 event (in either direction) ordered by timestamp.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -14,7 +15,13 @@ from src.database.models import Repetition
 from .base_screen import BaseScreen
 from .formatting import format_timestamp
 from .theme import Fonts
-from .widgets import ColumnSpec, TreeSorter, apply_treeview_style, build_header, build_tree
+from .widgets import (
+    ColumnSpec,
+    TreeSorter,
+    apply_treeview_style,
+    build_header,
+    build_tree,
+)
 
 if TYPE_CHECKING:
     from .app import App
@@ -75,10 +82,18 @@ class WordDetailScreen(BaseScreen):
 
         apply_treeview_style()
         columns = (
-            ColumnSpec("direction", "Direction", 240, 160, sort_key=lambda r: r.direction),
-            ColumnSpec("date", "Date & Time", 200, 160, sort_key=lambda r: r.practiced_at),
             ColumnSpec(
-                "remembered", "Remembered", 110, 80, anchor="center",
+                "direction", "Direction", 240, 160, sort_key=lambda r: r.direction
+            ),
+            ColumnSpec(
+                "date", "Date & Time", 200, 160, sort_key=lambda r: r.practiced_at
+            ),
+            ColumnSpec(
+                "remembered",
+                "Remembered",
+                110,
+                80,
+                anchor="center",
                 sort_key=lambda r: r.remembered,
             ),
         )
@@ -139,6 +154,7 @@ class WordDetailScreen(BaseScreen):
             session.expunge(word)
 
         from .dialogs import WordEditDialog
+
         dialog = WordEditDialog(
             self,
             src_lang=self._ctx.src_lang,

@@ -24,6 +24,7 @@ Typical usage::
 The worker calls ``self._job.queue.put(("progress", 5, 100))`` etc., and
 ``self._job.stop_event`` is the cooperative cancellation flag.
 """
+
 from __future__ import annotations
 
 import queue
@@ -86,7 +87,10 @@ class BackgroundJob:
 
         self._running = True
         self._thread = threading.Thread(
-            target=target, args=args, kwargs=kwargs, daemon=True,
+            target=target,
+            args=args,
+            kwargs=kwargs,
+            daemon=True,
         )
         self._thread.start()
         self._owner.after(self._poll_ms, self._poll)

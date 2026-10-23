@@ -1,4 +1,5 @@
 """Shared base class for repository implementations."""
+
 from sqlalchemy.orm import Session
 
 

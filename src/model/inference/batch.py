@@ -13,6 +13,7 @@ pads most of every batch with zeros *and* hands the backend a differently-shaped
 tensor per chunk; bucketing turns both into non-issues. Results are returned in
 the caller's original order.
 """
+
 from __future__ import annotations
 
 import torch
@@ -58,15 +59,15 @@ def final_step_curves(
             len(picks), max_len, n_features, dtype=torch.float32, device=device
         )
         for pos, i in enumerate(picks):
-            batch[pos, : lengths[pos]] = torch.tensor(
-                sequences[i], dtype=torch.float32
-            )
+            batch[pos, : lengths[pos]] = torch.tensor(sequences[i], dtype=torch.float32)
 
         with torch.inference_mode():
             raw = model(batch)  # (B, max_len, HEAD_OUTPUTS)
 
         idx = torch.tensor([n - 1 for n in lengths], device=device)
-        raw_last = raw[torch.arange(len(picks), device=device), idx]  # (B, HEAD_OUTPUTS)
+        raw_last = raw[
+            torch.arange(len(picks), device=device), idx
+        ]  # (B, HEAD_OUTPUTS)
         for pos, i in enumerate(picks):
             out[i] = curve_from(raw_last[pos])
 

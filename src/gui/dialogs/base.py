@@ -9,6 +9,7 @@ Encapsulates the boilerplate that every dialog in this app needs:
 
 Subclasses implement only :meth:`_build`.
 """
+
 from __future__ import annotations
 
 from typing import Callable
@@ -41,7 +42,8 @@ class BaseDialog(ctk.CTkToplevel):
         self.lift()
         self.focus_force()
         self._safe_grab_after_id: str | None = self.after(
-            self._SAFE_GRAB_DELAY_MS, self._safe_grab,
+            self._SAFE_GRAB_DELAY_MS,
+            self._safe_grab,
         )
         self.bind("<Destroy>", self._on_destroy_event, add="+")
 

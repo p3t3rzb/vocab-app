@@ -1,4 +1,5 @@
 """SM-2-style fallback estimator: interval ladder expressed as a curve."""
+
 import math
 
 import pytest
@@ -38,7 +39,14 @@ def test_first_success_is_one_day():
 
 
 def test_first_success_after_lapse_restarts_the_ladder():
-    reps = make_reps([(T0, True), (T0 + 10 * DAY, True), (T0 + 40 * DAY, False), (T0 + 41 * DAY, True)])
+    reps = make_reps(
+        [
+            (T0, True),
+            (T0 + 10 * DAY, True),
+            (T0 + 40 * DAY, False),
+            (T0 + 41 * DAY, True),
+        ]
+    )
     assert interval_of(reps) == pytest.approx(H.first_interval)
 
 
@@ -67,8 +75,14 @@ def test_ease_is_bounded():
 
 
 def test_next_repetition_delta_at_reference_threshold_is_the_interval():
-    p = HeuristicPredictor(PredictConfig(recall_threshold=H.reference_threshold, max_delta_seconds=math.inf))
-    assert p.next_repetition_delta(make_reps([(T0, True)])) == pytest.approx(H.first_interval)
+    p = HeuristicPredictor(
+        PredictConfig(
+            recall_threshold=H.reference_threshold, max_delta_seconds=math.inf
+        )
+    )
+    assert p.next_repetition_delta(make_reps([(T0, True)])) == pytest.approx(
+        H.first_interval
+    )
 
 
 def test_higher_user_threshold_shortens_interval():
@@ -80,9 +94,9 @@ def test_higher_user_threshold_shortens_interval():
 
 def test_recall_probability_at_interval_is_reference_threshold():
     reps = make_reps([(T0, True)])
-    assert HeuristicPredictor().recall_probability(reps, H.first_interval) == pytest.approx(
-        H.reference_threshold
-    )
+    assert HeuristicPredictor().recall_probability(
+        reps, H.first_interval
+    ) == pytest.approx(H.reference_threshold)
 
 
 def test_post_rep_curves_appends_both_outcomes():
@@ -92,7 +106,11 @@ def test_post_rep_curves_appends_both_outcomes():
         [(reps, Direction.FORWARD), ([], Direction.REVERSE)], practiced_at=T0 + 10 * DAY
     )
     assert ok.tau > no.tau
-    assert no.tau == pytest.approx(H.relearn_interval / math.log(1 / H.reference_threshold))
+    assert no.tau == pytest.approx(
+        H.relearn_interval / math.log(1 / H.reference_threshold)
+    )
     # A never-practised card: the hypothetical rep is its whole history.
-    assert new_ok.tau == pytest.approx(H.first_interval / math.log(1 / H.reference_threshold))
+    assert new_ok.tau == pytest.approx(
+        H.first_interval / math.log(1 / H.reference_threshold)
+    )
     assert new_no.tau == no.tau

@@ -1,4 +1,5 @@
 """Word model — one vocabulary entry plus per-direction forgetting-curve time constants."""
+
 from sqlalchemy import Boolean, Float, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,17 +61,29 @@ class Word(BaseORM):
     target_text: Mapped[str] = mapped_column(Text, nullable=False)
     fwd_tau: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     rev_tau: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    fwd_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    rev_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    fwd_ceiling: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=None
+    )
+    rev_ceiling: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=None
+    )
 
     fwd_ok_tau: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     fwd_no_tau: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     rev_ok_tau: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
     rev_no_tau: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    fwd_ok_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    fwd_no_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    rev_ok_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
-    rev_no_ceiling: Mapped[float | None] = mapped_column(Float, nullable=True, default=None)
+    fwd_ok_ceiling: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=None
+    )
+    fwd_no_ceiling: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=None
+    )
+    rev_ok_ceiling: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=None
+    )
+    rev_no_ceiling: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=None
+    )
 
     priority: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="0"

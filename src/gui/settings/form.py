@@ -9,6 +9,7 @@ live threshold label, and the :meth:`read` validator that returns an
 The view never touches Tk variables directly — it only calls
 :meth:`read` and the :attr:`appearance` property.
 """
+
 from __future__ import annotations
 
 import math
@@ -40,12 +41,16 @@ class SettingsForm:
         self._on_appearance_change = on_appearance_change
 
         self._threshold_var = ctk.DoubleVar(value=initial.recall_threshold)
-        self._threshold_label_var = ctk.StringVar(value=f"{initial.recall_threshold:.2f}")
+        self._threshold_label_var = ctk.StringVar(
+            value=f"{initial.recall_threshold:.2f}"
+        )
         # An unlimited interval leaves the day entry greyed out, so it still needs
         # a sensible number to show and to fall back to if the box is unticked.
         unlimited = math.isinf(initial.max_delta_seconds)
         self._no_max_var = ctk.BooleanVar(value=unlimited)
-        shown = AppSettings().max_delta_seconds if unlimited else initial.max_delta_seconds
+        shown = (
+            AppSettings().max_delta_seconds if unlimited else initial.max_delta_seconds
+        )
         self._max_days_var = ctk.StringVar(
             value=str(int(round(shown / _SECONDS_PER_DAY)))
         )
@@ -66,7 +71,9 @@ class SettingsForm:
 
         # Recall threshold
         ctk.CTkLabel(
-            self._parent, text="Recall threshold:", anchor="w",
+            self._parent,
+            text="Recall threshold:",
+            anchor="w",
             font=ctk.CTkFont(**Fonts.SECTION),
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(16, 2))
         row += 1
@@ -77,7 +84,9 @@ class SettingsForm:
                 "Schedule a word for review when the predicted probability of "
                 "recalling it drops below this value."
             ),
-            anchor="w", wraplength=560, text_color="gray",
+            anchor="w",
+            wraplength=560,
+            text_color="gray",
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
         row += 1
 
@@ -96,14 +105,18 @@ class SettingsForm:
         )
         self._threshold_slider.grid(row=0, column=0, sticky="ew", padx=(0, 12))
         ctk.CTkLabel(
-            slider_row, textvariable=self._threshold_label_var, width=50,
+            slider_row,
+            textvariable=self._threshold_label_var,
+            width=50,
             font=ctk.CTkFont(**Fonts.SECTION),
         ).grid(row=0, column=1, sticky="e")
         row += 1
 
         # Max interval
         ctk.CTkLabel(
-            self._parent, text="Max repetition interval (days):", anchor="w",
+            self._parent,
+            text="Max repetition interval (days):",
+            anchor="w",
             font=ctk.CTkFont(**Fonts.SECTION),
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(20, 2))
         row += 1
@@ -116,7 +129,9 @@ class SettingsForm:
                 "curve says, which the ordering of a practice session does not "
                 "depend on either way."
             ),
-            anchor="w", wraplength=560, text_color="gray",
+            anchor="w",
+            wraplength=560,
+            text_color="gray",
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
         row += 1
 
@@ -124,7 +139,9 @@ class SettingsForm:
         max_row.grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
         self._max_days_entry = ctk.CTkEntry(
-            max_row, textvariable=self._max_days_var, width=120,
+            max_row,
+            textvariable=self._max_days_var,
+            width=120,
         )
         self._max_days_entry.pack(side="left")
 
@@ -139,7 +156,9 @@ class SettingsForm:
 
         # Practice ordering
         ctk.CTkLabel(
-            self._parent, text="Practice ordering:", anchor="w",
+            self._parent,
+            text="Practice ordering:",
+            anchor="w",
             font=ctk.CTkFont(**Fonts.SECTION),
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(20, 2))
         row += 1
@@ -152,7 +171,9 @@ class SettingsForm:
                 "the threshold every learned word competes on its gain at any time. "
                 "Turning the threshold off requires gain-only ordering."
             ),
-            anchor="w", wraplength=560, text_color="gray",
+            anchor="w",
+            wraplength=560,
+            text_color="gray",
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(0, 4))
         row += 1
 
@@ -174,7 +195,9 @@ class SettingsForm:
 
         # Appearance
         ctk.CTkLabel(
-            self._parent, text="Appearance:", anchor="w",
+            self._parent,
+            text="Appearance:",
+            anchor="w",
             font=ctk.CTkFont(**Fonts.SECTION),
         ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(20, 4))
         row += 1

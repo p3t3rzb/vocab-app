@@ -6,6 +6,7 @@ network, so :func:`load_model` reconstructs the right architecture before
 loading the state dict — older checkpoints with different
 ``hidden_size``/``num_layers`` still load cleanly.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -31,7 +32,9 @@ def save_checkpoint(model: RecallLSTM, path: Path, val_loss: float, epoch: int) 
     )
 
 
-def load_model(checkpoint_path: str | Path, device: torch.device | None = None) -> RecallLSTM:
+def load_model(
+    checkpoint_path: str | Path, device: torch.device | None = None
+) -> RecallLSTM:
     """Load a saved :class:`RecallLSTM` checkpoint.
 
     The model is moved to ``device`` (auto-detected if not supplied) and put
@@ -61,9 +64,7 @@ def load_model(checkpoint_path: str | Path, device: torch.device | None = None) 
         state["head.bias"] = torch.cat(
             [
                 state["head.bias"],
-                torch.tensor(
-                    [CEILING_LOGIT_MAX], device=state["head.bias"].device
-                ),
+                torch.tensor([CEILING_LOGIT_MAX], device=state["head.bias"].device),
             ]
         )
     model.load_state_dict(state)

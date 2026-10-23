@@ -5,6 +5,7 @@ history; this helper turns that curve into a point recall probability at a given
 gap and into an analytically-derived next-review time (no bisection — see
 :func:`src.model.curve.next_delta`).
 """
+
 from __future__ import annotations
 
 import torch
@@ -93,7 +94,9 @@ class Predictor:
             ValueError: if ``reps`` is empty.
         """
         raw_last = self._raw_param(reps, direction)
-        delta = torch.tensor([[delta_seconds]], dtype=torch.float32, device=self._device)
+        delta = torch.tensor(
+            [[delta_seconds]], dtype=torch.float32, device=self._device
+        )
         return curve_recall(delta, raw_last.view(1, 1, -1)).item()
 
     def next_repetition_delta(

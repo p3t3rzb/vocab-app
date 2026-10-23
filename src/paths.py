@@ -4,6 +4,7 @@ Centralises the locations of ``storage/``, the database and model checkpoint
 directories, and the settings file so that GUI code, settings, and the model package
 all agree on where things live.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

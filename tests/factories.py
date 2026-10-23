@@ -1,4 +1,5 @@
 """Builders for test data: transient repetitions and rows inserted into the test DB."""
+
 from __future__ import annotations
 
 from collections.abc import Iterable

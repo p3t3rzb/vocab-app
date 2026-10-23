@@ -8,6 +8,7 @@ The font kwargs are stored as plain dicts so they can be passed to
 ``customtkinter.CTkFont(**Fonts.HEADER)`` at widget-creation time —
 ``CTkFont`` requires a running Tk root, so we cannot pre-instantiate it.
 """
+
 from __future__ import annotations
 
 from src import paths as _paths

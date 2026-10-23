@@ -1,4 +1,5 @@
 """Torch device selection."""
+
 import torch
 
 

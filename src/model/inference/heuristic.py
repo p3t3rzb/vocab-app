@@ -35,6 +35,7 @@ ceiling of 1. The stored time constant therefore stays threshold-independent —
 the user's own recall threshold is applied live on top, as it is for a trained
 model.
 """
+
 from __future__ import annotations
 
 import math

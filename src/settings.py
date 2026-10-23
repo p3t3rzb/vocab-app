@@ -5,6 +5,7 @@ shared across every language-pair database. Use :func:`load_settings` to read
 the current values (returning defaults if the file is missing or invalid) and
 :func:`save_settings` to persist changes.
 """
+
 from __future__ import annotations
 
 import json

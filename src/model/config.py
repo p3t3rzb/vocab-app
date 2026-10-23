@@ -109,9 +109,9 @@ class HeuristicConfig:
     """
 
     reference_threshold: float = 0.8
-    first_interval: float = 86_400.0     # 1 day
-    relearn_interval: float = 600.0      # 10 minutes
-    max_interval: float = 63_072_000.0   # 2 years
+    first_interval: float = 86_400.0  # 1 day
+    relearn_interval: float = 600.0  # 10 minutes
+    max_interval: float = 63_072_000.0  # 2 years
     ease_start: float = 2.5
     ease_bonus: float = 0.1
     ease_penalty: float = 0.2

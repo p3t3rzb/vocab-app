@@ -5,6 +5,7 @@ The free-function public API (``init_db`` / ``get_session``) in
 singleton so existing call sites stay unchanged. The class is also importable
 directly for tests or future multi-database scenarios.
 """
+
 import threading
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -135,7 +136,9 @@ class Database:
             for flag in ("priority", "ignored"):
                 if flag not in cols:
                     conn.execute(
-                        text(f"ALTER TABLE words ADD COLUMN {flag} INTEGER NOT NULL DEFAULT 0")
+                        text(
+                            f"ALTER TABLE words ADD COLUMN {flag} INTEGER NOT NULL DEFAULT 0"
+                        )
                     )
                     changed = True
             if changed:

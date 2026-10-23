@@ -1,4 +1,5 @@
 """Training building blocks: batching, masked loss, step mask and the history shift."""
+
 import math
 
 import pytest
@@ -27,7 +28,9 @@ def test_masked_bce_ignores_masked_steps_and_sums():
     pred = torch.tensor([[0.9, 0.5, 0.01]])
     target = torch.tensor([[1.0, 0.0, 1.0]])
     mask = torch.tensor([[1.0, 1.0, 0.0]])
-    assert masked_bce(pred, target, mask).item() == pytest.approx(-math.log(0.9) - math.log(0.5), rel=1e-5)
+    assert masked_bce(pred, target, mask).item() == pytest.approx(
+        -math.log(0.9) - math.log(0.5), rel=1e-5
+    )
 
 
 def test_step_mask():
@@ -47,11 +50,14 @@ def test_predict_shifts_the_gap_out_of_the_model_input():
             seen["x"] = x.clone()
             return torch.zeros(*x.shape[:2], 2)
 
-    bx = torch.tensor([[[math.log(11), 1, 0, 1, 0], [math.log(101), 0, 1, 1, 0]]], dtype=torch.float32)
+    bx = torch.tensor(
+        [[[math.log(11), 1, 0, 1, 0], [math.log(101), 0, 1, 1, 0]]], dtype=torch.float32
+    )
     out = _predict(Spy(), bx)
 
     assert seen["x"][0, :, 0].tolist() == pytest.approx([0.0, math.log(11)])
     assert torch.equal(seen["x"][..., 1:], bx[..., 1:])
     assert out[0].tolist() == pytest.approx(
-        curve_recall(torch.tensor([[10.0, 100.0]]), torch.zeros(1, 2, 2))[0].tolist(), rel=1e-4
+        curve_recall(torch.tensor([[10.0, 100.0]]), torch.zeros(1, 2, 2))[0].tolist(),
+        rel=1e-4,
     )

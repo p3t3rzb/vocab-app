@@ -66,6 +66,7 @@ here — reproduces the single-parameter family exactly. That is what
 :class:`~src.model.inference.HeuristicPredictor` emits (SM-2 fits no ceiling) and
 what a database or checkpoint written before the ceiling existed carries.
 """
+
 from __future__ import annotations
 
 import math
@@ -389,10 +390,9 @@ def expected_retained(
     Returns:
         Expected recallable seconds, ``> 0``.
     """
-    return (
-        recall_now * retained_seconds(success)
-        + (1.0 - recall_now) * retained_seconds(failure)
-    )
+    return recall_now * retained_seconds(success) + (
+        1.0 - recall_now
+    ) * retained_seconds(failure)
 
 
 def expected_gain(

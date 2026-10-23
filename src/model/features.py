@@ -10,6 +10,7 @@ so its output stays a clean, invertible function of ``Δt`` (see
 :func:`rep_row` builds one row on its own, which is what lets callers append a
 *hypothetical* next repetition and ask what the curve would look like after it.
 """
+
 from __future__ import annotations
 
 import math

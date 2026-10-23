@@ -1,4 +1,5 @@
 """Engine lifecycle, migrations, repositories and the raw sqlite peek helpers."""
+
 import sqlite3
 
 import pytest
@@ -61,8 +62,12 @@ def test_migration_adds_ceiling_and_flag_columns(tmp_path):
     tau_cols = ", ".join(
         f"{d}{o}_tau REAL" for d in ("fwd", "rev") for o in ("", "_ok", "_no")
     )
-    con.execute(f"CREATE TABLE words (id INTEGER PRIMARY KEY, source_text TEXT NOT NULL, target_text TEXT NOT NULL, {tau_cols})")
-    con.execute("INSERT INTO words (id, source_text, target_text, fwd_tau) VALUES (1, 'chat', 'kot', 1000.0)")
+    con.execute(
+        f"CREATE TABLE words (id INTEGER PRIMARY KEY, source_text TEXT NOT NULL, target_text TEXT NOT NULL, {tau_cols})"
+    )
+    con.execute(
+        "INSERT INTO words (id, source_text, target_text, fwd_tau) VALUES (1, 'chat', 'kot', 1000.0)"
+    )
     con.commit()
     con.close()
 
@@ -94,7 +99,9 @@ class TestWordRepository:
 
 class TestRepetitionRepository:
     def test_get_for_word_filters_direction_and_orders(self, db):
-        wid = add_word("chat", "kot", {F: [(T0 + 2, True), (T0, False)], R: [(T0 + 1, True)]})
+        wid = add_word(
+            "chat", "kot", {F: [(T0 + 2, True), (T0, False)], R: [(T0 + 1, True)]}
+        )
         with get_session() as session:
             reps = RepetitionRepository(session).get_for_word(wid, F)
         assert [r.practiced_at for r in reps] == [T0, T0 + 2]
@@ -105,7 +112,10 @@ class TestRepetitionRepository:
         with get_session() as session:
             repo = RepetitionRepository(session)
             assert repo.latest_practiced_at_by_word() == {a: T0 + 9}
-            assert repo.latest_practiced_at_by_word_direction() == {(a, 0): T0 + 5, (a, 1): T0 + 9}
+            assert repo.latest_practiced_at_by_word_direction() == {
+                (a, 0): T0 + 5,
+                (a, 1): T0 + 9,
+            }
         assert b  # a word with no history is simply absent
 
     def test_history_by_word_direction(self, db):
@@ -120,11 +130,18 @@ class TestRepetitionRepository:
 
     def test_first_attempt_success_rate(self, db):
         with get_session() as session:
-            assert RepetitionRepository(session).first_attempt_success_rate(default=0.42) == 0.42
+            assert (
+                RepetitionRepository(session).first_attempt_success_rate(default=0.42)
+                == 0.42
+            )
         add_word("a", "1", {F: [(T0, True), (T0 + 1, False)], R: [(T0, False)]})
-        add_word("b", "2", {F: [(T0 + 5, False), (T0, True)]})  # earliest is the success
+        add_word(
+            "b", "2", {F: [(T0 + 5, False), (T0, True)]}
+        )  # earliest is the success
         with get_session() as session:
-            assert RepetitionRepository(session).first_attempt_success_rate() == pytest.approx(2 / 3)
+            assert RepetitionRepository(
+                session
+            ).first_attempt_success_rate() == pytest.approx(2 / 3)
 
     def test_count_since_counts_events(self, db):
         add_word("a", "1", {F: [(T0, True), (T0 + DAY, True), (T0 + DAY, False)]})

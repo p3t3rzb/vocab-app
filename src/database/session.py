@@ -4,6 +4,7 @@ These wrap a single process-wide :class:`Database` instance so callers don't
 need to thread one through. Tests or future multi-database scenarios can
 import :class:`Database` directly from :mod:`src.database.database`.
 """
+
 from contextlib import AbstractContextManager
 
 from sqlalchemy.orm import Session

@@ -44,6 +44,7 @@ worst-recalled-first always reviews weak cards immediately, which locks difficul
 and gap together and is why the trained model fits almost no decay. Deferring weak
 cards is what supplies the long-gap observations the model needs.
 """
+
 from __future__ import annotations
 
 import heapq
@@ -119,14 +120,21 @@ class Card:
     success: Curve | None
     failure: Curve | None
 
-
     def prompt_text(self) -> str:
         """Text shown before the answer is revealed."""
-        return self.source_text if self.direction is Direction.FORWARD else self.target_text
+        return (
+            self.source_text
+            if self.direction is Direction.FORWARD
+            else self.target_text
+        )
 
     def answer_text(self) -> str:
         """Text shown after the user requests the reveal."""
-        return self.target_text if self.direction is Direction.FORWARD else self.source_text
+        return (
+            self.target_text
+            if self.direction is Direction.FORWARD
+            else self.source_text
+        )
 
     def direction_label(self, src_lang: str, tgt_lang: str) -> str:
         """``"French → Polish"`` / ``"Polish → French"`` style direction label."""
@@ -440,7 +448,9 @@ def build_queue(
     new_scored_priority_by_word: dict[int, list[Card]] = {}
     with get_session() as session:
         words = WordRepository(session).get_all()
-        last_by_dir = RepetitionRepository(session).latest_practiced_at_by_word_direction()
+        last_by_dir = RepetitionRepository(
+            session
+        ).latest_practiced_at_by_word_direction()
 
     for word in words:
         if word.ignored:
@@ -469,7 +479,9 @@ def build_queue(
                 card.score = expected_gain(
                     first_success, None, card.success, card.failure
                 )
-                new = new_scored_priority_by_word if word.priority else new_scored_by_word
+                new = (
+                    new_scored_priority_by_word if word.priority else new_scored_by_word
+                )
                 new.setdefault(word.id, []).append(card)
                 continue
 
@@ -487,7 +499,10 @@ def build_queue(
 
             card.score = card_gain(card, now)
 
-            if recall_at(current.tau, now - last, current.ceiling) <= cfg.recall_threshold:
+            if (
+                recall_at(current.tau, now - last, current.ceiling)
+                <= cfg.recall_threshold
+            ):
                 queue.push(card, -card.score, TIER_REVIEW)
             else:
                 # Not due yet — park it in the waiting heap keyed by due time.
@@ -505,7 +520,9 @@ def build_queue(
     for new_scored in (new_scored_priority_by_word, new_scored_by_word):
         new_words = list(new_scored.values())
         random.shuffle(new_words)
-        keys = [max(-sum(c.score for c in cards) / len(cards), floor) for cards in new_words]
+        keys = [
+            max(-sum(c.score for c in cards) / len(cards), floor) for cards in new_words
+        ]
         for cards, key in zip(new_words, keys):
             random.shuffle(cards)  # random direction order within the pair
             for card in cards:
@@ -517,7 +534,9 @@ def build_queue(
     return queue, waiting
 
 
-def _push_new(queue: PracticeQueue, new_by_word: dict[int, list[Card]], tier: int) -> None:
+def _push_new(
+    queue: PracticeQueue, new_by_word: dict[int, list[Card]], tier: int
+) -> None:
     """Push one priority group's new cards into ``tier``, word by word.
 
     The tier puts them after every due learned card. A single-card
@@ -530,7 +549,7 @@ def _push_new(queue: PracticeQueue, new_by_word: dict[int, list[Card]], tier: in
     """
     buckets = list(new_by_word.values())
     partial = [b for b in buckets if len(b) == 1]  # other direction already learned
-    pairs = [b for b in buckets if len(b) != 1]     # both directions still new
+    pairs = [b for b in buckets if len(b) != 1]  # both directions still new
     random.shuffle(partial)
     random.shuffle(pairs)
     for i, cards in enumerate(partial + pairs):

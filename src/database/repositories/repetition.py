@@ -1,4 +1,5 @@
 """Query and insert helpers for :class:`Repetition`."""
+
 from collections import defaultdict
 
 from sqlalchemy import func, select
@@ -28,9 +29,8 @@ class RepetitionRepository(BaseRepository):
         One aggregate query for the whole table — suitable for rendering the
         word list's "Last revised" column without a per-word round-trip.
         """
-        stmt = (
-            select(Repetition.word_id, func.max(Repetition.practiced_at))
-            .group_by(Repetition.word_id)
+        stmt = select(Repetition.word_id, func.max(Repetition.practiced_at)).group_by(
+            Repetition.word_id
         )
         return {word_id: latest for word_id, latest in self._session.execute(stmt)}
 
@@ -41,14 +41,11 @@ class RepetitionRepository(BaseRepository):
         builder and the word list's live due-time cache without a per-pair
         round-trip. Keys are ``(word_id, direction_int)``.
         """
-        stmt = (
-            select(
-                Repetition.word_id,
-                Repetition.direction,
-                func.max(Repetition.practiced_at),
-            )
-            .group_by(Repetition.word_id, Repetition.direction)
-        )
+        stmt = select(
+            Repetition.word_id,
+            Repetition.direction,
+            func.max(Repetition.practiced_at),
+        ).group_by(Repetition.word_id, Repetition.direction)
         return {
             (word_id, direction): latest
             for word_id, direction, latest in self._session.execute(stmt)
@@ -91,18 +88,15 @@ class RepetitionRepository(BaseRepository):
         Returns:
             The mean outcome of every pair's earliest repetition, in ``[0, 1]``.
         """
-        earliest = (
-            select(
-                Repetition.remembered.label("remembered"),
-                func.row_number()
-                .over(
-                    partition_by=(Repetition.word_id, Repetition.direction),
-                    order_by=(Repetition.practiced_at, Repetition.id),
-                )
-                .label("rn"),
+        earliest = select(
+            Repetition.remembered.label("remembered"),
+            func.row_number()
+            .over(
+                partition_by=(Repetition.word_id, Repetition.direction),
+                order_by=(Repetition.practiced_at, Repetition.id),
             )
-            .subquery()
-        )
+            .label("rn"),
+        ).subquery()
         stmt = select(func.avg(earliest.c.remembered)).where(earliest.c.rn == 1)
         rate = self._session.scalar(stmt)
         return default if rate is None else float(rate)

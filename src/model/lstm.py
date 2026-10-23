@@ -111,7 +111,9 @@ class RecallLSTM(nn.Module):
         raw = self.head(out)
         if self.fixed_ceiling:
             log_tau = raw[..., :1]
-            raw = torch.cat([log_tau, torch.full_like(log_tau, CEILING_LOGIT_MAX)], dim=-1)
+            raw = torch.cat(
+                [log_tau, torch.full_like(log_tau, CEILING_LOGIT_MAX)], dim=-1
+            )
         return raw
 
     def hyperparams(self) -> dict:

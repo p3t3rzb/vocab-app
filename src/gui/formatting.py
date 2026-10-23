@@ -14,6 +14,7 @@ bound its "practised today" tally.
 different contracts (none-handling, "due now" vs "–", minute precision)
 and are kept separate.
 """
+
 from __future__ import annotations
 
 import time

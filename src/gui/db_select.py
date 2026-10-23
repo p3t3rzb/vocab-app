@@ -4,6 +4,7 @@ Lists every ``*.db`` file in ``storage/databases/`` along with its language pair
 count, and most recent training timestamp. Also hosts the "New database"
 dialog and the navigation entry point to the global settings screen.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -58,11 +59,29 @@ class DatabaseSelectScreen(BaseScreen):
 
         apply_treeview_style()
         columns = (
-            ColumnSpec("file", "File", 180, 120, sort_key=lambda e: e.db_path.name.lower()),
-            ColumnSpec("source", "Source language", 150, 100, sort_key=lambda e: e.src_lang.lower()),
-            ColumnSpec("target", "Target language", 150, 100, sort_key=lambda e: e.tgt_lang.lower()),
-            ColumnSpec("words", "Words", 70, 60, anchor="e", sort_key=lambda e: e.word_count),
-            ColumnSpec("trained", "Last Trained", 160, 120, sort_key=lambda e: e.trained_mtime),
+            ColumnSpec(
+                "file", "File", 180, 120, sort_key=lambda e: e.db_path.name.lower()
+            ),
+            ColumnSpec(
+                "source",
+                "Source language",
+                150,
+                100,
+                sort_key=lambda e: e.src_lang.lower(),
+            ),
+            ColumnSpec(
+                "target",
+                "Target language",
+                150,
+                100,
+                sort_key=lambda e: e.tgt_lang.lower(),
+            ),
+            ColumnSpec(
+                "words", "Words", 70, 60, anchor="e", sort_key=lambda e: e.word_count
+            ),
+            ColumnSpec(
+                "trained", "Last Trained", 160, 120, sort_key=lambda e: e.trained_mtime
+            ),
         )
         self._tree, vsb = build_tree(tree_frame, columns=columns)
         self._sorter = TreeSorter(self._tree, columns, on_change=self._render)
@@ -74,9 +93,15 @@ class DatabaseSelectScreen(BaseScreen):
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.grid(row=2, column=0, padx=24, pady=(0, 20), sticky="e")
 
-        ctk.CTkButton(btn_frame, text="Settings", width=100, command=self._app.show_settings).pack(side="left", padx=4)
-        ctk.CTkButton(btn_frame, text="New", width=100, command=self._new_database).pack(side="left", padx=4)
-        ctk.CTkButton(btn_frame, text="Open", width=100, command=self._open_selected).pack(side="left", padx=4)
+        ctk.CTkButton(
+            btn_frame, text="Settings", width=100, command=self._app.show_settings
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            btn_frame, text="New", width=100, command=self._new_database
+        ).pack(side="left", padx=4)
+        ctk.CTkButton(
+            btn_frame, text="Open", width=100, command=self._open_selected
+        ).pack(side="left", padx=4)
 
     def _load_databases(self) -> None:
         """Re-scan ``storage/databases/`` into the backing entry list, then render."""
@@ -136,7 +161,9 @@ class DatabaseSelectScreen(BaseScreen):
             return
         idx = self._tree.index(sel[0])
         entry = self._db_entries[idx]
-        self._app.show_word_list(DbContext(entry.db_path, entry.src_lang, entry.tgt_lang))
+        self._app.show_word_list(
+            DbContext(entry.db_path, entry.src_lang, entry.tgt_lang)
+        )
 
 
 class NewDatabaseDialog(BaseDialog):
@@ -172,7 +199,9 @@ class NewDatabaseDialog(BaseDialog):
         ctk.CTkLabel(self, text="File:", anchor="e", width=130).grid(
             row=2, column=0, padx=(20, 8), pady=6, sticky="e"
         )
-        self._filename_label = ctk.CTkLabel(self, text="", anchor="w", text_color="gray")
+        self._filename_label = ctk.CTkLabel(
+            self, text="", anchor="w", text_color="gray"
+        )
         self._filename_label.grid(row=2, column=1, padx=(0, 20), pady=6, sticky="ew")
 
         self._src_entry.bind("<KeyRelease>", lambda _e: self._update_filename())
@@ -181,8 +210,12 @@ class NewDatabaseDialog(BaseDialog):
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.grid(row=3, column=0, columnspan=2, pady=(20, 16))
 
-        ctk.CTkButton(btn_frame, text="Cancel", width=100, command=self.destroy).pack(side="left", padx=8)
-        ctk.CTkButton(btn_frame, text="Create", width=100, command=self._create).pack(side="left", padx=8)
+        ctk.CTkButton(btn_frame, text="Cancel", width=100, command=self.destroy).pack(
+            side="left", padx=8
+        )
+        ctk.CTkButton(btn_frame, text="Create", width=100, command=self._create).pack(
+            side="left", padx=8
+        )
 
         self._src_entry.focus()
         self.bind_default_keys(on_save=self._create)
@@ -206,7 +239,9 @@ class NewDatabaseDialog(BaseDialog):
         tgt_lang = self._tgt_entry.get().strip()
 
         if not src_lang or not tgt_lang:
-            messagebox.showwarning("Missing fields", "Both language fields must be filled in.", parent=self)
+            messagebox.showwarning(
+                "Missing fields", "Both language fields must be filled in.", parent=self
+            )
             return
 
         base = safe_db_basename(src_lang, tgt_lang)

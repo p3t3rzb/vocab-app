@@ -4,6 +4,7 @@ The screen owns two :class:`BackgroundJob` instances (an init job for the
 queue/model loader, and a per-answer job for predictor calls) and tracks a
 :class:`PracticeState` that decides which widgets are visible.
 """
+
 from __future__ import annotations
 
 import time
@@ -111,12 +112,17 @@ class PracticeScreen(BaseScreen):
             right_widget_factory=_add_stats,
         )
         header.grid(
-            row=0, column=0, sticky="ew",
-            padx=Spacing.SCREEN_PAD_X, pady=Spacing.SCREEN_PAD_Y,
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=Spacing.SCREEN_PAD_X,
+            pady=Spacing.SCREEN_PAD_Y,
         )
 
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=1, column=0, sticky="nsew", padx=Spacing.SCREEN_PAD_X, pady=(20, 8))
+        content.grid(
+            row=1, column=0, sticky="nsew", padx=Spacing.SCREEN_PAD_X, pady=(20, 8)
+        )
         content.grid_rowconfigure(0, weight=1)
         content.grid_rowconfigure(7, weight=1)
         content.grid_columnconfigure(0, weight=1)
@@ -268,8 +274,10 @@ class PracticeScreen(BaseScreen):
         # RESULT — hiding it there made it flicker on every answer.
         # `_ignore_current` ignores the click instead.
         if state in (
-            PracticeState.PROMPT, PracticeState.ANSWER,
-            PracticeState.SAVING, PracticeState.RESULT,
+            PracticeState.PROMPT,
+            PracticeState.ANSWER,
+            PracticeState.SAVING,
+            PracticeState.RESULT,
         ):
             self._ignore_button.grid()
         else:
@@ -336,9 +344,12 @@ class PracticeScreen(BaseScreen):
             return
         # The currently-shown card has already been popped off the heap, so add
         # it back to the count while it's still pending an answer.
-        pending = 1 if self._state in (
-            PracticeState.PROMPT, PracticeState.ANSWER, PracticeState.SAVING
-        ) else 0
+        pending = (
+            1
+            if self._state
+            in (PracticeState.PROMPT, PracticeState.ANSWER, PracticeState.SAVING)
+            else 0
+        )
         remaining = len(self._queue) + pending
         parts = [f"Answered {self._answered_count}", f"Today {self._today_count}"]
         if self._state not in (PracticeState.DONE, PracticeState.OFFER_EXTRA):
@@ -405,7 +416,9 @@ class PracticeScreen(BaseScreen):
 
         self._current = card
 
-        self._direction_var.set(card.direction_label(self._ctx.src_lang, self._ctx.tgt_lang))
+        self._direction_var.set(
+            card.direction_label(self._ctx.src_lang, self._ctx.tgt_lang)
+        )
         self._prompt_var.set(card.prompt_text())
 
         if card.last_practiced is None:
@@ -429,7 +442,11 @@ class PracticeScreen(BaseScreen):
         card = self._current
         self._set_state(PracticeState.SAVING)
         self._answer_job.start(
-            answer_worker, card, remembered, self._predictor, self._answer_job.queue,
+            answer_worker,
+            card,
+            remembered,
+            self._predictor,
+            self._answer_job.queue,
         )
 
     def _ignore_current(self) -> None:
@@ -532,7 +549,11 @@ class PracticeScreen(BaseScreen):
             self._next_var.set("next repetition: —  (no estimator)")
         else:
             delta = next_ts - int(time.time())
-            note = HEURISTIC_NOTE if isinstance(self._predictor, HeuristicPredictor) else ""
+            note = (
+                HEURISTIC_NOTE
+                if isinstance(self._predictor, HeuristicPredictor)
+                else ""
+            )
             self._next_var.set(f"next repetition {format_future(delta)}{note}")
 
         if next_ts is not None:
