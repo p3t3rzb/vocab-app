@@ -92,6 +92,9 @@ class TrainScreen(BaseScreen):
         plot_frame.grid(row=1, column=0, sticky="nsew", padx=Spacing.SCREEN_PAD_X, pady=(4, 4))
         plot_frame.grid_rowconfigure(0, weight=1)
         plot_frame.grid_columnconfigure(0, weight=1)
+        # The rendered image would otherwise set the label's requested size,
+        # stopping the plot area from shrinking with the window.
+        plot_frame.grid_propagate(False)
 
         self._plot_label = tk.Label(plot_frame, borderwidth=0, bg=Colors.PLOT_DARK_BG)
         self._plot_label.grid(row=0, column=0, sticky="nsew")

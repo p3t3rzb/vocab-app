@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
-from ..theme import Colors
+from ..theme import Colors, WindowSizes
 
 
 class LossPlot:
@@ -31,8 +31,10 @@ class LossPlot:
         self._train_losses: list[float] = []
         self._val_losses: list[float] = []
         self._pending_after_id: str | None = None
+        self._resize_after_id: str | None = None
         self._destroyed = False
         self._build_figure()
+        self._target.bind("<Configure>", self._on_configure, add="+")
 
     # ------------------------------------------------------------------
     # Figure setup
@@ -127,6 +129,20 @@ class LossPlot:
         self._target.configure(image=photo)
         self._target._photo = photo  # prevent GC
 
+    def _on_configure(self, _event: tk.Event) -> None:
+        """Debounce label resizes into a single :meth:`render` call."""
+        if self._destroyed:
+            return
+        if self._resize_after_id is not None:
+            self._target.after_cancel(self._resize_after_id)
+        self._resize_after_id = self._target.after(
+            WindowSizes.RESCALE_DEBOUNCE_MS, self._render_after_resize
+        )
+
+    def _render_after_resize(self) -> None:
+        self._resize_after_id = None
+        self.render()
+
     # ------------------------------------------------------------------
     # Teardown
     # ------------------------------------------------------------------
@@ -142,6 +158,12 @@ class LossPlot:
             except Exception:
                 pass
             self._pending_after_id = None
+        if self._resize_after_id is not None:
+            try:
+                self._target.after_cancel(self._resize_after_id)
+            except Exception:
+                pass
+            self._resize_after_id = None
         # Drop the PhotoImage reference held on the label so it can be GC'd.
         if hasattr(self._target, "_photo"):
             try:
