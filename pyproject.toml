@@ -14,3 +14,15 @@ dependencies = [
     "sentence-transformers>=5.5.1",
     "scikit-learn>=1.8.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "slow: trains a real (tiny) model end to end; deselect with -m 'not slow'",
+]
