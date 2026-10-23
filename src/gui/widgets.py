@@ -41,7 +41,8 @@ class ScreenHeader(ctk.CTkFrame):
     """Top-of-screen header frame: optional Back button + centred title slot.
 
     The title label is exposed as :attr:`title_label` so callers can rewrite
-    its text later (e.g. once async-loaded data resolves).
+    its text later (e.g. once async-loaded data resolves), and the Back button
+    as :attr:`back_button` so a screen on the brand band can recolour it.
     """
 
     def __init__(
@@ -54,9 +55,18 @@ class ScreenHeader(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self.grid_columnconfigure(1, weight=1)
 
+        self.back_button: ctk.CTkButton | None = None
         if on_back is not None:
-            back_button = ctk.CTkButton(self, text="← Back", width=80, command=on_back)
-            back_button.grid(row=0, column=0, sticky="w")
+            self.back_button = ctk.CTkButton(
+                self,
+                text="‹ Back",
+                width=80,
+                fg_color="transparent",
+                hover_color=Colors.CHIP_BG,
+                text_color=Colors.TEXT_MUTED,
+                command=on_back,
+            )
+            self.back_button.grid(row=0, column=0, sticky="w")
 
         self.title_label = ctk.CTkLabel(
             self,
@@ -99,7 +109,7 @@ def build_tree(
     *,
     columns: Sequence[ColumnSpec],
     selectmode: str = "browse",
-) -> tuple[ttk.Treeview, ttk.Scrollbar]:
+) -> tuple[ttk.Treeview, ctk.CTkScrollbar]:
     """Build a styled treeview + vertical scrollbar pair.
 
     The caller still owns gridding the tree and scrollbar into ``parent``
@@ -122,7 +132,8 @@ def build_tree(
         else:
             tree.column(col.key, width=width, minwidth=minwidth)
 
-    scrollbar = ttk.Scrollbar(parent, orient="vertical", command=tree.yview)
+    # A CTk scrollbar rather than ttk's, which ignores the colour theme.
+    scrollbar = ctk.CTkScrollbar(parent, orientation="vertical", command=tree.yview)
     tree.configure(yscrollcommand=scrollbar.set)
     return tree, scrollbar
 
@@ -232,7 +243,7 @@ def apply_treeview_style() -> None:
     style.map(
         "App.Treeview",
         background=[("selected", sel_bg)],
-        foreground=[("selected", "#ffffff")],
+        foreground=[("selected", fg)],
     )
 
 

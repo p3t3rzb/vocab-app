@@ -18,7 +18,7 @@ from src.database import WordRepository, get_session, init_db
 from ..background import BackgroundJob
 from ..base_screen import BaseScreen
 from ..formatting import day_start, format_future, format_past
-from ..theme import Fonts, Hints, PollIntervals, Spacing
+from ..theme import Colors, Fonts, Hints, PollIntervals, Spacing
 from ..widgets import build_header
 from .queue_model import (
     ERROR_PRIORITY,
@@ -54,7 +54,11 @@ class PracticeScreen(BaseScreen):
         self._queue: PracticeQueue = PracticeQueue()
         self._waiting: PracticeQueue = PracticeQueue()
         self._use_threshold = True
-        self._answered_count = 0
+        self._remembered_count = 0
+        self._forgot_count = 0
+        # Outcome of the answer being saved, read back when the worker finishes.
+        self._pending_remembered = False
+        self._result_color: str | tuple[str, str] = Colors.CARD_BORDER
         self._today_count = 0
         self._today_start = day_start()
         self._state: PracticeState = PracticeState.LOADING
@@ -90,26 +94,25 @@ class PracticeScreen(BaseScreen):
     # ------------------------------------------------------------------
 
     def build(self) -> None:
-        """Build the header, prompt/answer area, and the hint bar."""
-        self.grid_rowconfigure(1, weight=1)
+        """Build the brand-band header, the progress bar, and the word card."""
+        self.configure(fg_color=Colors.PRACTICE_BG)
+        self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
-
-        self._stats_var = ctk.StringVar(value="")
-
-        def _add_stats(parent: ctk.CTkFrame) -> ctk.CTkLabel:
-            label = ctk.CTkLabel(
-                parent,
-                textvariable=self._stats_var,
-                font=ctk.CTkFont(**Fonts.SMALL),
-            )
-            label.grid(row=0, column=2, sticky="e")
-            return label
 
         header = build_header(
             self,
-            title=f"Practice  —  {self._ctx.src_lang} ↔ {self._ctx.tgt_lang}",
+            title=f"{self._ctx.src_lang} ↔ {self._ctx.tgt_lang}",
             on_back=self._go_back,
-            right_widget_factory=_add_stats,
+            right_widget_factory=self._build_stats,
+        )
+        header.title_label.configure(
+            font=ctk.CTkFont(**Fonts.BODY_BOLD), text_color=Colors.ON_BRAND
+        )
+        assert header.back_button is not None
+        header.back_button.configure(
+            text="‹ Words",
+            text_color=Colors.ON_BRAND_MUTED,
+            hover_color=Colors.BRAND_HOVER,
         )
         header.grid(
             row=0,
@@ -119,91 +122,210 @@ class PracticeScreen(BaseScreen):
             pady=Spacing.SCREEN_PAD_Y,
         )
 
-        content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(
-            row=1, column=0, sticky="nsew", padx=Spacing.SCREEN_PAD_X, pady=(20, 8)
+        # Session progress: answered cards out of answered + still queued, split
+        # into a remembered (green) and a forgot (red) segment.
+        track = ctk.CTkFrame(
+            self, height=4, corner_radius=2, fg_color=Colors.PROGRESS_TRACK
         )
-        content.grid_rowconfigure(0, weight=1)
-        content.grid_rowconfigure(7, weight=1)
-        content.grid_columnconfigure(0, weight=1)
-        self._content = content
-        content.bind("<Configure>", lambda _e: self._fit_wraplength(), add="+")
+        track.grid(row=1, column=0, sticky="ew", padx=Spacing.SCREEN_PAD_X)
+        self._progress_good = ctk.CTkFrame(
+            track, height=4, corner_radius=2, fg_color=Colors.GREEN
+        )
+        self._progress_bad = ctk.CTkFrame(
+            track, height=4, corner_radius=2, fg_color=Colors.RED
+        )
+
+        card = ctk.CTkFrame(
+            self,
+            fg_color=Colors.SURFACE,
+            corner_radius=Spacing.CARD_RADIUS,
+            border_width=3,
+            border_color=Colors.CARD_BORDER,
+        )
+        card.grid(
+            row=2, column=0, sticky="nsew", padx=Spacing.CARD_PAD_X, pady=(28, 36)
+        )
+        card.grid_rowconfigure(1, weight=1)
+        card.grid_columnconfigure(0, weight=1)
+        self._card = card
+
+        # Top row: direction chip + Ignore button
+        top = ctk.CTkFrame(card, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew", padx=28, pady=(22, 0))
+        top.grid_columnconfigure(0, weight=1)
 
         self._direction_var = ctk.StringVar(value="")
-        ctk.CTkLabel(
-            content,
+        self._direction_chip = ctk.CTkLabel(
+            top,
             textvariable=self._direction_var,
-            font=ctk.CTkFont(**Fonts.BODY),
-            text_color=("gray40", "gray70"),
-        ).grid(row=1, column=0, pady=(0, 16))
+            font=ctk.CTkFont(**Fonts.CHIP),
+            fg_color=Colors.CHIP_BG,
+            text_color=Colors.TEXT,
+            corner_radius=12,
+            height=24,
+        )
+        self._direction_chip.grid(row=0, column=0, sticky="w")
 
+        self._ignore_button = ctk.CTkButton(
+            top,
+            text="Ignore word",
+            width=96,
+            height=28,
+            corner_radius=8,
+            fg_color="transparent",
+            border_width=1,
+            border_color=Colors.BORDER,
+            hover_color=Colors.CHIP_BG,
+            text_color=Colors.TEXT_MUTED,
+            font=ctk.CTkFont(**Fonts.SMALL),
+            command=self._ignore_current,
+        )
+        self._ignore_button.grid(row=0, column=1, sticky="e")
+
+        # Middle: prompt, divider, answer, last-revised note
+        middle = ctk.CTkFrame(card, fg_color="transparent")
+        middle.grid(row=1, column=0, sticky="nsew", padx=28)
+        middle.grid_columnconfigure(0, weight=1)
+        middle.grid_rowconfigure(0, weight=1)
+        middle.grid_rowconfigure(5, weight=1)
+        self._content = middle
+        middle.bind("<Configure>", lambda _e: self._fit_wraplength(), add="+")
+
+        self._fonts = {
+            "prompt": ctk.CTkFont(**Fonts.PROMPT),
+            "revealed": ctk.CTkFont(**Fonts.PROMPT_REVEALED),
+            "message": ctk.CTkFont(**Fonts.MESSAGE),
+        }
         self._prompt_var = ctk.StringVar(value="Loading…")
         self._prompt_label = ctk.CTkLabel(
-            content,
+            middle,
             textvariable=self._prompt_var,
-            font=ctk.CTkFont(**Fonts.PROMPT),
-            wraplength=700,
+            font=self._fonts["prompt"],
+            wraplength=560,
         )
-        self._prompt_label.grid(row=2, column=0, pady=(0, 12))
+        self._prompt_label.grid(row=1, column=0)
 
-        self._sep_label = ctk.CTkLabel(
-            content,
-            text="─ ─ ─ ─ ─",
-            text_color=("gray60", "gray50"),
+        self._sep = ctk.CTkFrame(
+            middle, width=48, height=3, corner_radius=2, fg_color=Colors.BORDER
         )
-        self._sep_label.grid(row=3, column=0, pady=(8, 8))
+        self._sep.grid(row=2, column=0, pady=12)
 
         self._answer_var = ctk.StringVar(value="")
         self._answer_label = ctk.CTkLabel(
-            content,
+            middle,
             textvariable=self._answer_var,
             font=ctk.CTkFont(**Fonts.ANSWER),
-            wraplength=700,
+            wraplength=560,
         )
-        self._answer_label.grid(row=4, column=0, pady=(0, 24))
+        self._answer_label.grid(row=3, column=0)
 
         self._last_var = ctk.StringVar(value="")
-        ctk.CTkLabel(
-            content,
+        self._last_label = ctk.CTkLabel(
+            middle,
             textvariable=self._last_var,
             font=ctk.CTkFont(**Fonts.SMALL),
-            text_color=("gray40", "gray70"),
-        ).grid(row=5, column=0, pady=(0, 4))
-
-        self._next_var = ctk.StringVar(value="")
-        ctk.CTkLabel(
-            content,
-            textvariable=self._next_var,
-            font=ctk.CTkFont(**Fonts.BODY_BOLD),
-        ).grid(row=6, column=0, pady=(0, 4))
-
-        self._ignore_button = ctk.CTkButton(
-            content,
-            text="Ignore word",
-            width=110,
-            fg_color="transparent",
-            border_width=1,
-            text_color=("gray20", "gray80"),
-            command=self._ignore_current,
+            text_color=Colors.TEXT_MUTED,
         )
-        self._ignore_button.grid(row=8, column=0, pady=(8, 0))
+        self._last_label.grid(row=4, column=0, pady=(6, 0))
+
+        # Bottom bar: one of hint / answer buttons / result, swapped per state.
+        # Fixed height so swapping them never makes the card jump.
+        bottom = ctk.CTkFrame(card, fg_color="transparent", height=48)
+        bottom.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 22))
+        bottom.grid_propagate(False)
+        bottom.grid_rowconfigure(0, weight=1)
+        bottom.grid_columnconfigure(0, weight=1)
 
         self._hint_var = ctk.StringVar(value="")
-        ctk.CTkLabel(
-            self,
+        self._hint_label = ctk.CTkLabel(
+            bottom,
             textvariable=self._hint_var,
             font=ctk.CTkFont(**Fonts.SMALL),
-            text_color=("gray30", "gray70"),
-        ).grid(row=2, column=0, sticky="ew", padx=Spacing.SCREEN_PAD_X, pady=(0, 16))
+            text_color=Colors.TEXT_MUTED,
+        )
+        self._hint_label.grid(row=0, column=0)
+
+        self._answer_buttons = ctk.CTkFrame(bottom, fg_color="transparent")
+        self._answer_buttons.grid(row=0, column=0)
+        button_font = ctk.CTkFont(**Fonts.BODY_BOLD)
+        # Routed through _on_key so a click obeys the same state gating as the
+        # arrow keys (e.g. a second click while SAVING is ignored).
+        ctk.CTkButton(
+            self._answer_buttons,
+            text=Hints.FORGOT_BUTTON,
+            width=200,
+            height=44,
+            corner_radius=22,
+            fg_color=Colors.RED_TINT,
+            hover_color=Colors.RED_TINT_HOVER,
+            text_color=Colors.RED_TINT_TEXT,
+            font=button_font,
+            command=lambda: self._on_key(ArrowKey.LEFT),
+        ).grid(row=0, column=0, padx=8)
+        ctk.CTkButton(
+            self._answer_buttons,
+            text=Hints.REMEMBERED_BUTTON,
+            width=200,
+            height=44,
+            corner_radius=22,
+            fg_color=Colors.GREEN_TINT,
+            hover_color=Colors.GREEN_TINT_HOVER,
+            text_color=Colors.GREEN_TINT_TEXT,
+            font=button_font,
+            command=lambda: self._on_key(ArrowKey.RIGHT),
+        ).grid(row=0, column=1, padx=8)
+
+        self._result_frame = ctk.CTkFrame(bottom, fg_color="transparent")
+        self._result_frame.grid(row=0, column=0, sticky="ew")
+        self._result_frame.grid_columnconfigure(1, weight=1)
+        self._result_pill = ctk.CTkLabel(
+            self._result_frame,
+            text="",
+            font=ctk.CTkFont(**Fonts.CHIP),
+            corner_radius=14,
+            height=28,
+        )
+        self._result_pill.grid(row=0, column=0, sticky="w")
+        self._next_var = ctk.StringVar(value="")
+        ctk.CTkLabel(
+            self._result_frame,
+            textvariable=self._next_var,
+            font=ctk.CTkFont(**Fonts.BODY),
+            anchor="w",
+        ).grid(row=0, column=1, sticky="w", padx=10)
+        ctk.CTkLabel(
+            self._result_frame,
+            text=Hints.RESULT_BAR,
+            font=ctk.CTkFont(**Fonts.SMALL),
+            text_color=Colors.TEXT_MUTED,
+        ).grid(row=0, column=2, sticky="e")
 
         self._set_state(PracticeState.LOADING)
+
+    def _build_stats(self, parent: ctk.CTkFrame) -> ctk.CTkFrame:
+        """Grid the remembered / forgot / today / left counters into the header."""
+        stats = ctk.CTkFrame(parent, fg_color="transparent")
+        stats.grid(row=0, column=2, sticky="e")
+        font = ctk.CTkFont(**Fonts.SMALL)
+        colors = {
+            "remembered": Colors.GREEN,
+            "forgot": Colors.RED_ON_BRAND,
+            "today": Colors.ON_BRAND_MUTED,
+            "left": Colors.ON_BRAND,
+        }
+        self._stat_labels: dict[str, ctk.CTkLabel] = {}
+        for col, (key, color) in enumerate(colors.items()):
+            label = ctk.CTkLabel(stats, text="", font=font, text_color=color)
+            label.grid(row=0, column=col, padx=(14, 0))
+            self._stat_labels[key] = label
+        return stats
 
     def on_rescale(self) -> None:
         """Re-fit the wrap width, which is stored unscaled and so goes stale on a rescale."""
         self._fit_wraplength()
 
     def _fit_wraplength(self) -> None:
-        """Wrap the prompt and answer at the content area's current width.
+        """Wrap the prompt and answer at the card's current inner width.
 
         A fixed wrap width lets long sentences overflow a narrow window.
         ``wraplength`` is given in unscaled units (customtkinter applies the
@@ -267,48 +389,76 @@ class PracticeScreen(BaseScreen):
     # ------------------------------------------------------------------
 
     def _set_state(self, state: PracticeState) -> None:
-        """Update the visible widgets and hint bar to reflect the new state."""
+        """Update the visible widgets and bottom bar to reflect the new state."""
         self._state = state
-
-        # Kept up through SAVING, which lasts only a moment between ANSWER and
-        # RESULT — hiding it there made it flicker on every answer.
-        # `_ignore_current` ignores the click instead.
-        if state in (
+        on_card = state in (
             PracticeState.PROMPT,
             PracticeState.ANSWER,
             PracticeState.SAVING,
             PracticeState.RESULT,
-        ):
-            self._ignore_button.grid()
+        )
+        revealed = state in (
+            PracticeState.ANSWER,
+            PracticeState.SAVING,
+            PracticeState.RESULT,
+        )
+
+        # Kept up through SAVING, which lasts only a moment between ANSWER and
+        # RESULT — hiding it there made it flicker on every answer.
+        # `_ignore_current` ignores the click instead.
+        for widget in (self._ignore_button, self._direction_chip):
+            if on_card:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+        if revealed:
+            self._prompt_label.configure(
+                font=self._fonts["revealed"], text_color=Colors.TEXT_MUTED
+            )
+            self._sep.grid()
+            self._answer_label.grid()
+            self._last_label.grid_remove()
         else:
-            self._ignore_button.grid_remove()
+            font = self._fonts["prompt" if on_card else "message"]
+            self._prompt_label.configure(font=font, text_color=Colors.TEXT)
+            self._sep.grid_remove()
+            self._answer_label.grid_remove()
+            self._last_label.grid()
+
+        # The answer buttons stay up through SAVING for the same no-flicker reason.
+        bottom = {
+            PracticeState.ANSWER: self._answer_buttons,
+            PracticeState.SAVING: self._answer_buttons,
+            PracticeState.RESULT: self._result_frame,
+        }.get(state, self._hint_label)
+        for widget in (self._hint_label, self._answer_buttons, self._result_frame):
+            if widget is bottom:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+        self._card.configure(
+            border_color=self._result_color
+            if state is PracticeState.RESULT
+            else Colors.CARD_BORDER
+        )
 
         if state is PracticeState.LOADING:
             self._direction_var.set("")
             self._prompt_var.set("Loading…")
-            self._sep_label.grid_remove()
             self._answer_var.set("")
             self._last_var.set("")
             self._next_var.set("")
             self._hint_var.set("")
 
         elif state is PracticeState.PROMPT:
-            self._sep_label.grid_remove()
             self._answer_var.set("")
             self._next_var.set("")
             self._hint_var.set(Hints.PROMPT_DOWN)
 
         elif state is PracticeState.ANSWER:
-            self._sep_label.grid()
             self._next_var.set("")
-            self._hint_var.set(Hints.ANSWER_BAR)
-
-        elif state is PracticeState.SAVING:
-            self._hint_var.set(Hints.SAVING_BAR)
-
-        elif state is PracticeState.RESULT:
-            self._sep_label.grid()
-            self._hint_var.set(Hints.RESULT_BAR)
 
         elif state is PracticeState.OFFER_EXTRA:
             self._direction_var.set("")
@@ -316,7 +466,6 @@ class PracticeScreen(BaseScreen):
                 "Nothing is due and there are no new words left.\n"
                 "Keep practicing words you already know?"
             )
-            self._sep_label.grid_remove()
             self._answer_var.set("")
             self._last_var.set("")
             self._next_var.set("")
@@ -325,7 +474,6 @@ class PracticeScreen(BaseScreen):
         elif state is PracticeState.DONE:
             self._direction_var.set("")
             self._prompt_var.set("No more words to repeat now.")
-            self._sep_label.grid_remove()
             self._answer_var.set("")
             self._last_var.set("")
             self._next_var.set("")
@@ -334,13 +482,17 @@ class PracticeScreen(BaseScreen):
         self._update_stats()
 
     def _update_stats(self) -> None:
-        """Refresh the "Answered N • Today K • Remaining M" counter in the header.
+        """Refresh the header counters and the session progress bar.
 
-        ``Answered`` counts this session only; ``Today`` counts every repetition
-        recorded in this database since local midnight, earlier sessions included.
+        ``remembered`` / ``forgot`` count this session only; ``today`` counts
+        every repetition recorded in this database since local midnight, earlier
+        sessions included. The progress bar spans answered + still-queued cards.
         """
         if self._state is PracticeState.LOADING:
-            self._stats_var.set("")
+            for label in self._stat_labels.values():
+                label.configure(text="")
+            self._progress_good.place_forget()
+            self._progress_bad.place_forget()
             return
         # The currently-shown card has already been popped off the heap, so add
         # it back to the count while it's still pending an answer.
@@ -350,11 +502,28 @@ class PracticeScreen(BaseScreen):
             in (PracticeState.PROMPT, PracticeState.ANSWER, PracticeState.SAVING)
             else 0
         )
-        remaining = len(self._queue) + pending
-        parts = [f"Answered {self._answered_count}", f"Today {self._today_count}"]
-        if self._state not in (PracticeState.DONE, PracticeState.OFFER_EXTRA):
-            parts.append(f"Remaining {remaining}")
-        self._stats_var.set("  •  ".join(parts))
+        finished = self._state in (PracticeState.DONE, PracticeState.OFFER_EXTRA)
+        remaining = 0 if finished else len(self._queue) + pending
+        self._stat_labels["remembered"].configure(
+            text=f"{self._remembered_count} remembered"
+        )
+        self._stat_labels["forgot"].configure(text=f"{self._forgot_count} forgot")
+        self._stat_labels["today"].configure(text=f"{self._today_count} today")
+        self._stat_labels["left"].configure(
+            text="" if finished else f"{remaining} left"
+        )
+
+        total = self._remembered_count + self._forgot_count + remaining
+        good = self._remembered_count / total if total else 0.0
+        bad = self._forgot_count / total if total else 0.0
+        for bar, x, width in (
+            (self._progress_good, 0.0, good),
+            (self._progress_bad, good, bad),
+        ):
+            if width > 0:
+                bar.place(relx=x, rely=0, relwidth=width, relheight=1)
+            else:
+                bar.place_forget()
 
     # ------------------------------------------------------------------
     # Card flow
@@ -416,9 +585,8 @@ class PracticeScreen(BaseScreen):
 
         self._current = card
 
-        self._direction_var.set(
-            card.direction_label(self._ctx.src_lang, self._ctx.tgt_lang)
-        )
+        label = card.direction_label(self._ctx.src_lang, self._ctx.tgt_lang)
+        self._direction_var.set(f"  {label.upper()}  ")
         self._prompt_var.set(card.prompt_text())
 
         if card.last_practiced is None:
@@ -440,6 +608,7 @@ class PracticeScreen(BaseScreen):
         if self._current is None:
             return
         card = self._current
+        self._pending_remembered = remembered
         self._set_state(PracticeState.SAVING)
         self._answer_job.start(
             answer_worker,
@@ -530,7 +699,18 @@ class PracticeScreen(BaseScreen):
         curves: tuple[Curve | None, Curve | None, Curve | None],
     ) -> None:
         """Answer worker finished — show result and maybe re-queue the card."""
-        self._answered_count += 1
+        if self._pending_remembered:
+            self._remembered_count += 1
+            self._result_color = Colors.GREEN
+            self._result_pill.configure(
+                text="  Remembered  ", fg_color=Colors.GREEN, text_color=Colors.ON_GREEN
+            )
+        else:
+            self._forgot_count += 1
+            self._result_color = Colors.RED
+            self._result_pill.configure(
+                text="  Didn't remember  ", fg_color=Colors.RED, text_color="#FFFFFF"
+            )
         answer_day = day_start(practiced_at)
         if answer_day == self._today_start:
             self._today_count += 1

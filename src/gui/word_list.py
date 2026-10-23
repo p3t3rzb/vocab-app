@@ -130,25 +130,67 @@ class WordListScreen(BaseScreen):
         self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
-        # Header row
-        def _add_count(parent: ctk.CTkFrame) -> ctk.CTkLabel:
+        # Brand band: back, title + count, Train Model, Practice
+        band = ctk.CTkFrame(self, corner_radius=0, fg_color=Colors.BRAND)
+        band.grid(row=0, column=0, sticky="ew")
+
+        def _add_actions(parent: ctk.CTkFrame) -> ctk.CTkFrame:
+            actions = ctk.CTkFrame(parent, fg_color="transparent")
+            actions.grid(row=0, column=2, sticky="e")
             self._count_label = ctk.CTkLabel(
-                parent, text="", font=ctk.CTkFont(**Fonts.SMALL)
+                actions,
+                text="",
+                font=ctk.CTkFont(**Fonts.SMALL),
+                text_color=Colors.ON_BRAND_MUTED,
             )
-            self._count_label.grid(row=0, column=2, sticky="e")
-            return self._count_label
+            self._count_label.grid(row=0, column=0, padx=(0, 16))
+            ctk.CTkButton(
+                actions,
+                text="Train model",
+                width=110,
+                height=36,
+                fg_color="transparent",
+                border_width=1,
+                border_color=Colors.ON_BRAND_BORDER,
+                hover_color=Colors.BRAND_HOVER,
+                text_color=Colors.ON_BRAND,
+                command=self._open_train_dialog,
+            ).grid(row=0, column=1, padx=(0, 8))
+            self._btn_practice = ctk.CTkButton(
+                actions,
+                text="Practice",
+                width=130,
+                height=36,
+                fg_color=Colors.GREEN,
+                hover_color=Colors.GREEN_HOVER,
+                text_color=Colors.ON_GREEN,
+                font=ctk.CTkFont(**Fonts.BODY_BOLD),
+                command=self._open_practice,
+            )
+            self._btn_practice.grid(row=0, column=2)
+            return actions
 
         header = build_header(
-            self,
+            band,
             title=self._ctx.title,
             on_back=self._app.show_db_select,
-            right_widget_factory=_add_count,
+            right_widget_factory=_add_actions,
         )
-        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(14, 4))
+        header.title_label.configure(
+            font=ctk.CTkFont(**Fonts.TITLE_BAND), text_color=Colors.ON_BRAND
+        )
+        assert header.back_button is not None
+        header.back_button.configure(
+            text="‹ Databases",
+            width=100,
+            text_color=Colors.ON_BRAND_MUTED,
+            hover_color=Colors.BRAND_HOVER,
+        )
+        header.pack(fill="x", padx=16, pady=18)
 
-        # Search + action buttons
+        # Search + edit buttons
         toolbar = ctk.CTkFrame(self, fg_color="transparent")
-        toolbar.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 6))
+        toolbar.grid(row=1, column=0, sticky="ew", padx=16, pady=(14, 10))
         toolbar.grid_columnconfigure(0, weight=1)
 
         self._search_var = ctk.StringVar()
@@ -157,36 +199,41 @@ class WordListScreen(BaseScreen):
             toolbar,
             textvariable=self._search_var,
             placeholder_text="Search words…",
+            height=36,
         ).grid(row=0, column=0, sticky="ew", padx=(0, 8))
 
-        ctk.CTkButton(toolbar, text="Add", width=70, command=self._add_word).grid(
-            row=0, column=1, padx=2
-        )
+        ctk.CTkButton(
+            toolbar, text="+ Add", width=70, height=36, command=self._add_word
+        ).grid(row=0, column=1, padx=2)
+        secondary = {
+            "width": 70,
+            "height": 36,
+            "state": "disabled",
+            "fg_color": Colors.SURFACE,
+            "hover_color": Colors.CHIP_BG,
+            "border_width": 1,
+            "border_color": Colors.BORDER,
+        }
         self._btn_edit = ctk.CTkButton(
-            toolbar, text="Edit", width=70, state="disabled", command=self._edit_word
+            toolbar,
+            text="Edit",
+            text_color=Colors.TEXT,
+            command=self._edit_word,
+            **secondary,
         )
         self._btn_edit.grid(row=0, column=2, padx=2)
         self._btn_delete = ctk.CTkButton(
             toolbar,
             text="Delete",
-            width=70,
-            state="disabled",
-            fg_color=Colors.DANGER,
-            hover_color=Colors.DANGER_HOVER,
+            text_color=Colors.RED_TINT_TEXT,
             command=self._delete_word,
+            **secondary,
         )
         self._btn_delete.grid(row=0, column=3, padx=2)
 
-        ctk.CTkButton(
-            toolbar, text="Practice", width=90, command=self._open_practice
-        ).grid(row=0, column=4, padx=(14, 2))
-
-        ctk.CTkButton(
-            toolbar, text="Train Model", width=110, command=self._open_train_dialog
-        ).grid(row=0, column=5, padx=2)
-
         # Treeview
-        tree_frame = ctk.CTkFrame(self, fg_color="transparent")
+        # A rounded surface card with the (square-cornered) treeview inset in it.
+        tree_frame = ctk.CTkFrame(self, fg_color=Colors.SURFACE)
         tree_frame.grid(row=2, column=0, sticky="nsew", padx=16, pady=(0, 16))
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
@@ -253,8 +300,8 @@ class WordListScreen(BaseScreen):
         )
         self._tree, vsb = build_tree(tree_frame, columns=columns)
         self._sorter = TreeSorter(self._tree, columns, on_change=self._apply_filter)
-        self._tree.grid(row=0, column=0, sticky="nsew")
-        vsb.grid(row=0, column=1, sticky="ns")
+        self._tree.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=10)
+        vsb.grid(row=0, column=1, sticky="ns", padx=(0, 6), pady=10)
 
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
         self._tree.bind("<Double-1>", lambda _e: self._open_detail())
@@ -281,7 +328,25 @@ class WordListScreen(BaseScreen):
                     _build_due_cache(self._all_words, last_by_dir, cfg)
                 )
         self._due_cache = self._app.due_cache or {}
+        self._refresh_due_count()
         self._apply_filter()
+
+    def _refresh_due_count(self) -> None:
+        """Show how many cards (word × direction) are due right now on the Practice button.
+
+        Ignored words are skipped, since a practice session never serves them.
+        """
+        now = int(time.time())
+        due = sum(
+            1
+            for w in self._all_words
+            if not w.ignored
+            for ts in self._due_cache.get(w.id, (None, None))
+            if ts is not None and ts <= now
+        )
+        self._btn_practice.configure(
+            text=f"Practice  ·  {due:,} due" if due else "Practice"
+        )
 
     def _sync_params_if_untrained(self) -> None:
         """Re-derive due times heuristically when the pair's checkpoint is gone.
