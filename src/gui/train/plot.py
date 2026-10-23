@@ -136,7 +136,7 @@ class LossPlot:
 
         photo = tk.PhotoImage(data=png_b64)
         self._target.configure(image=photo)
-        self._target._photo = photo  # prevent GC
+        self._target._photo = photo  # type: ignore[attr-defined]  # prevent GC
 
     def _on_configure(self, _event: tk.Event) -> None:
         """Debounce label resizes into a single :meth:`render` call."""

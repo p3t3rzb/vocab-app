@@ -41,7 +41,9 @@ def deck(db):
 
 def load(word_id: int) -> Word:
     with get_session() as session:
-        return session.get(Word, word_id)
+        word = session.get(Word, word_id)
+    assert word is not None
+    return word
 
 
 def history(word_id: int, direction: Direction):

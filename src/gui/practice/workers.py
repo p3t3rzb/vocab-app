@@ -23,7 +23,7 @@ from src.model import (
     RecallEstimator,
     load_model,
 )
-from src.model.curve import invert_curve
+from src.model.curve import Curve, invert_curve
 from src.settings import load_settings
 
 from ..db_context import DbContext
@@ -134,9 +134,9 @@ def answer_worker(
     try:
         practiced_at = int(time.time())
         next_ts: int | None = None
-        current: float | None = None
-        success: float | None = None
-        failure: float | None = None
+        current: Curve | None = None
+        success: Curve | None = None
+        failure: Curve | None = None
 
         with get_session() as session:
             reps_repo = RepetitionRepository(session)

@@ -7,7 +7,6 @@ import torch
 
 from src.model.curve import (
     CEILING_LOGIT_INIT,
-    CEILING_LOGIT_MAX,
     LOG_TAU_INIT,
     LOG_TAU_MAX,
     NO_CEILING,

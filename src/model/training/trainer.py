@@ -389,7 +389,7 @@ class Trainer:
                 pred = _predict(model, bx)
                 loss_sum = masked_bce(pred, bt, _step_mask(bl, starts[bi], max_l))
 
-                if training:
+                if optimizer is not None:
                     optimizer.zero_grad()
                     (loss_sum / reps_per_batch).backward()
                     nn.utils.clip_grad_norm_(

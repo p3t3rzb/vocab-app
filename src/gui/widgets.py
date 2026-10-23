@@ -110,7 +110,7 @@ def build_tree(
         parent,
         columns=tuple(c.key for c in columns),
         show="headings",
-        selectmode=selectmode,
+        selectmode=selectmode,  # type: ignore[arg-type]
         style="App.Treeview",
     )
     scale = ctk.ScalingTracker.widget_scaling
@@ -118,7 +118,7 @@ def build_tree(
         tree.heading(col.key, text=col.heading)
         width, minwidth = round(col.width * scale), round(col.minwidth * scale)
         if col.anchor is not None:
-            tree.column(col.key, width=width, minwidth=minwidth, anchor=col.anchor)
+            tree.column(col.key, width=width, minwidth=minwidth, anchor=col.anchor)  # type: ignore[call-overload]
         else:
             tree.column(col.key, width=width, minwidth=minwidth)
 
@@ -160,7 +160,7 @@ class TreeSorter:
         self._reverse = False
         for col in columns:
             if col.sort_key is not None:
-                self._tree.heading(col.key, command=lambda k=col.key: self._on_click(k))
+                self._tree.heading(col.key, command=lambda k=col.key: self._on_click(k))  # type: ignore[misc]
 
     def order(self, items: Sequence[Any]) -> list[Any]:
         """Return ``items`` reordered by the active sort (a copy if none)."""
@@ -245,7 +245,7 @@ def rescale_tree_columns(root: Any, ratio: float) -> None:
     for child in root.winfo_children():
         if isinstance(child, ttk.Treeview):
             for key in child["columns"]:
-                col = child.column(key)
+                col: Any = child.column(key)
                 child.column(
                     key,
                     width=round(col["width"] * ratio),

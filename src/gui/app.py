@@ -150,7 +150,7 @@ class App(ctk.CTk):
     def _pad_ctk_label(event: tk.Event) -> None:
         """Give the text label inside a CTkLabel 1 px of vertical padding."""
         if isinstance(event.widget.master, ctk.CTkLabel):
-            event.widget.configure(pady=1)
+            event.widget.configure(pady=1)  # type: ignore[call-arg]
 
     def _resync_widget_sizes(self, widget: tk.Misc) -> None:
         """Redraw CTk widgets whose pixel size didn't change across a rescale.

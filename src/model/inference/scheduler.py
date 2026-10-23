@@ -53,8 +53,8 @@ from .heuristic import HeuristicPredictor
 ProgressFn = Callable[[int, int], None]
 
 #: One direction's three curves: ``(current, after_remembered, after_forgotten)``.
-#: ``current`` is ``None`` when that direction has no history yet.
-CardCurves = tuple[Curve | None, Curve, Curve]
+#: All three are ``None`` when that direction has no history yet.
+CardCurves = tuple[Curve | None, Curve | None, Curve | None]
 
 
 class ParamScheduler:
