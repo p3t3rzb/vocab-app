@@ -132,7 +132,7 @@ class PracticeScreen(BaseScreen):
             track, height=4, corner_radius=2, fg_color=Colors.GREEN
         )
         self._progress_bad = ctk.CTkFrame(
-            track, height=4, corner_radius=2, fg_color=Colors.RED
+            track, height=4, corner_radius=2, fg_color=Colors.RED_ON_BRAND
         )
 
         card = ctk.CTkFrame(
@@ -228,7 +228,9 @@ class PracticeScreen(BaseScreen):
         )
         self._last_label.grid(row=4, column=0, pady=(6, 0))
 
-        # Bottom bar: one of hint / answer buttons / result, swapped per state.
+        # Bottom bar: hint / answer buttons / result, stacked in one cell and
+        # swapped per state by raising one over the others. They stay mapped:
+        # re-gridding a CTk widget redraws it a frame late, which flickered.
         # Fixed height so swapping them never makes the card jump.
         bottom = ctk.CTkFrame(card, fg_color="transparent", height=48)
         bottom.grid(row=2, column=0, sticky="ew", padx=28, pady=(0, 22))
@@ -243,10 +245,12 @@ class PracticeScreen(BaseScreen):
             font=ctk.CTkFont(**Fonts.SMALL),
             text_color=Colors.TEXT_MUTED,
         )
-        self._hint_label.grid(row=0, column=0)
+        self._hint_label.grid(row=0, column=0, sticky="nsew")
 
         self._answer_buttons = ctk.CTkFrame(bottom, fg_color="transparent")
-        self._answer_buttons.grid(row=0, column=0)
+        self._answer_buttons.grid(row=0, column=0, sticky="nsew")
+        self._answer_buttons.grid_rowconfigure(0, weight=1)
+        self._answer_buttons.grid_columnconfigure((0, 3), weight=1)
         button_font = ctk.CTkFont(**Fonts.BODY_BOLD)
         # Routed through _on_key so a click obeys the same state gating as the
         # arrow keys (e.g. a second click while SAVING is ignored).
@@ -261,7 +265,7 @@ class PracticeScreen(BaseScreen):
             text_color=Colors.RED_TINT_TEXT,
             font=button_font,
             command=lambda: self._on_key(ArrowKey.LEFT),
-        ).grid(row=0, column=0, padx=8)
+        ).grid(row=0, column=1, padx=8)
         ctk.CTkButton(
             self._answer_buttons,
             text=Hints.REMEMBERED_BUTTON,
@@ -273,11 +277,12 @@ class PracticeScreen(BaseScreen):
             text_color=Colors.GREEN_TINT_TEXT,
             font=button_font,
             command=lambda: self._on_key(ArrowKey.RIGHT),
-        ).grid(row=0, column=1, padx=8)
+        ).grid(row=0, column=2, padx=8)
 
         self._result_frame = ctk.CTkFrame(bottom, fg_color="transparent")
-        self._result_frame.grid(row=0, column=0, sticky="ew")
-        self._result_frame.grid_columnconfigure(1, weight=1)
+        self._result_frame.grid(row=0, column=0, sticky="nsew")
+        self._result_frame.grid_rowconfigure(0, weight=1)
+        self._result_frame.grid_columnconfigure((0, 4), weight=1)
         self._result_pill = ctk.CTkLabel(
             self._result_frame,
             text="",
@@ -285,20 +290,19 @@ class PracticeScreen(BaseScreen):
             corner_radius=14,
             height=28,
         )
-        self._result_pill.grid(row=0, column=0, sticky="w")
+        self._result_pill.grid(row=0, column=1)
         self._next_var = ctk.StringVar(value="")
         ctk.CTkLabel(
             self._result_frame,
             textvariable=self._next_var,
             font=ctk.CTkFont(**Fonts.BODY),
-            anchor="w",
-        ).grid(row=0, column=1, sticky="w", padx=10)
+        ).grid(row=0, column=2, padx=12)
         ctk.CTkLabel(
             self._result_frame,
             text=Hints.RESULT_BAR,
             font=ctk.CTkFont(**Fonts.SMALL),
             text_color=Colors.TEXT_MUTED,
-        ).grid(row=0, column=2, sticky="e")
+        ).grid(row=0, column=3)
 
         self._set_state(PracticeState.LOADING)
 
@@ -321,7 +325,13 @@ class PracticeScreen(BaseScreen):
         return stats
 
     def on_rescale(self) -> None:
-        """Re-fit the wrap width, which is stored unscaled and so goes stale on a rescale."""
+        """Re-apply the state's layout and re-fit the wrap width after a rescale.
+
+        customtkinter rescales a widget by replaying its last ``grid()`` call,
+        which re-shows anything hidden with ``grid_remove``. The wrap width is
+        stored unscaled and so goes stale too.
+        """
+        self._apply_layout(self._state)
         self._fit_wraplength()
 
     def _fit_wraplength(self) -> None:
@@ -389,8 +399,49 @@ class PracticeScreen(BaseScreen):
     # ------------------------------------------------------------------
 
     def _set_state(self, state: PracticeState) -> None:
-        """Update the visible widgets and bottom bar to reflect the new state."""
+        """Update the visible widgets, texts, and bottom bar to reflect the new state."""
         self._state = state
+        self._apply_layout(state)
+
+        if state is PracticeState.LOADING:
+            self._direction_var.set("")
+            self._prompt_var.set("Loading…")
+            self._answer_var.set("")
+            self._last_var.set("")
+            self._next_var.set("")
+            self._hint_var.set("")
+
+        elif state is PracticeState.PROMPT:
+            self._answer_var.set("")
+            self._next_var.set("")
+            self._hint_var.set(Hints.PROMPT_DOWN)
+
+        elif state is PracticeState.ANSWER:
+            self._next_var.set("")
+
+        elif state is PracticeState.OFFER_EXTRA:
+            self._direction_var.set("")
+            self._prompt_var.set(
+                "Nothing is due and there are no new words left.\n"
+                "Keep practicing words you already know?"
+            )
+            self._answer_var.set("")
+            self._last_var.set("")
+            self._next_var.set("")
+            self._hint_var.set(Hints.OFFER_EXTRA_BAR)
+
+        elif state is PracticeState.DONE:
+            self._direction_var.set("")
+            self._prompt_var.set("No more words to repeat now.")
+            self._answer_var.set("")
+            self._last_var.set("")
+            self._next_var.set("")
+            self._hint_var.set(Hints.DONE_BAR)
+
+        self._update_stats()
+
+    def _apply_layout(self, state: PracticeState) -> None:
+        """Show, hide, and restyle the card's widgets for ``state``."""
         on_card = state in (
             PracticeState.PROMPT,
             PracticeState.ANSWER,
@@ -432,54 +483,13 @@ class PracticeScreen(BaseScreen):
             PracticeState.SAVING: self._answer_buttons,
             PracticeState.RESULT: self._result_frame,
         }.get(state, self._hint_label)
-        for widget in (self._hint_label, self._answer_buttons, self._result_frame):
-            if widget is bottom:
-                widget.grid()
-            else:
-                widget.grid_remove()
+        bottom.tkraise()
 
         self._card.configure(
             border_color=self._result_color
             if state is PracticeState.RESULT
             else Colors.CARD_BORDER
         )
-
-        if state is PracticeState.LOADING:
-            self._direction_var.set("")
-            self._prompt_var.set("Loading…")
-            self._answer_var.set("")
-            self._last_var.set("")
-            self._next_var.set("")
-            self._hint_var.set("")
-
-        elif state is PracticeState.PROMPT:
-            self._answer_var.set("")
-            self._next_var.set("")
-            self._hint_var.set(Hints.PROMPT_DOWN)
-
-        elif state is PracticeState.ANSWER:
-            self._next_var.set("")
-
-        elif state is PracticeState.OFFER_EXTRA:
-            self._direction_var.set("")
-            self._prompt_var.set(
-                "Nothing is due and there are no new words left.\n"
-                "Keep practicing words you already know?"
-            )
-            self._answer_var.set("")
-            self._last_var.set("")
-            self._next_var.set("")
-            self._hint_var.set(Hints.OFFER_EXTRA_BAR)
-
-        elif state is PracticeState.DONE:
-            self._direction_var.set("")
-            self._prompt_var.set("No more words to repeat now.")
-            self._answer_var.set("")
-            self._last_var.set("")
-            self._next_var.set("")
-            self._hint_var.set(Hints.DONE_BAR)
-
-        self._update_stats()
 
     def _update_stats(self) -> None:
         """Refresh the header counters and the session progress bar.

@@ -162,6 +162,10 @@ class App(ctk.CTk):
         size — leaving unpainted patches. Feeding it its real size fixes that.
         """
         for child in widget.winfo_children():
+            # An unmapped widget reports a 1×1 size; feeding it that would draw
+            # it at 1×1 once it's shown again. It gets a fresh <Configure> then.
+            if not child.winfo_ismapped():
+                continue
             if isinstance(child, ctk.CTkBaseClass):
                 child._update_dimensions_event(
                     SimpleNamespace(

@@ -161,9 +161,9 @@ class WordListScreen(BaseScreen):
                 text="Practice",
                 width=130,
                 height=36,
-                fg_color=Colors.GREEN,
-                hover_color=Colors.GREEN_HOVER,
-                text_color=Colors.ON_GREEN,
+                fg_color=Colors.ACCENT,
+                hover_color=Colors.ACCENT_HOVER,
+                text_color=Colors.ON_ACCENT,
                 font=ctk.CTkFont(**Fonts.BODY_BOLD),
                 command=self._open_practice,
             )

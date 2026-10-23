@@ -47,6 +47,8 @@ class LossPlot:
         fig_bg = Colors.PLOT_DARK_BG if dark else Colors.PLOT_LIGHT_BG
         ax_bg = Colors.PLOT_DARK_AX if dark else Colors.PLOT_LIGHT_AX
         text_c = Colors.PLOT_DARK_TEXT if dark else Colors.PLOT_LIGHT_TEXT
+        train_c = Colors.PLOT_DARK_TRAIN_LINE if dark else Colors.PLOT_LIGHT_TRAIN_LINE
+        val_c = Colors.PLOT_DARK_VAL_LINE if dark else Colors.PLOT_LIGHT_VAL_LINE
 
         self._target.configure(bg=fig_bg)
 
@@ -65,16 +67,17 @@ class LossPlot:
         (self._line_train,) = self._ax.plot(
             [],
             [],
-            color=Colors.PLOT_TRAIN_LINE,
+            color=train_c,
             label="Train loss",
             linewidth=2,
         )
         (self._line_val,) = self._ax.plot(
             [],
             [],
-            color=Colors.PLOT_VAL_LINE,
+            color=val_c,
             label="Val loss",
             linewidth=2,
+            linestyle="--",
         )
         self._ax.legend(facecolor=ax_bg, labelcolor=text_c)
         self._fig.tight_layout()
