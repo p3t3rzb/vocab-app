@@ -187,6 +187,19 @@ def answer_worker(
                             None if curve is None else curve.ceiling,
                         )
 
+            if card.priority:
+                # Priority only orders new words — once both directions have been
+                # met, the word is no longer new and the flag has done its job.
+                other = (
+                    Direction.REVERSE
+                    if card.direction is Direction.FORWARD
+                    else Direction.FORWARD
+                )
+                if reps_repo.get_for_word(card.word_id, other):
+                    word = WordRepository(session).get_by_id(card.word_id)
+                    if word is not None:
+                        word.priority = False
+
         out_queue.put(
             ("answered", card, practiced_at, next_ts, (current, success, failure))
         )
