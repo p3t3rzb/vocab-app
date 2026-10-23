@@ -48,7 +48,7 @@ class Database:
 
         Args:
             database_url: SQLAlchemy URL such as
-                ``sqlite:///storage/french_polish.db``.
+                ``sqlite:///storage/databases/french_polish.db``.
             source_language: Human-readable name (e.g. ``"French"``) — used
                 only when seeding a brand-new database.
             target_language: Same, for the target language (e.g. ``"Polish"``).

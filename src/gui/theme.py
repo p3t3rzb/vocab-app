@@ -127,5 +127,6 @@ class Paths:
     """
 
     STORAGE_DIR = _paths.STORAGE_DIR
+    DATABASES_DIR = _paths.DATABASES_DIR
     MODELS_DIR = _paths.MODELS_DIR
     model_path = staticmethod(_paths.model_path)

@@ -8,7 +8,9 @@ Launches the customtkinter GUI for the vocab-repetition app. Run with:
 import customtkinter as ctk
 
 from src.gui.app import App
+from src.paths import ensure_storage_dirs
 
+ensure_storage_dirs()
 ctk.set_appearance_mode("system")
 ctk.set_default_color_theme("blue")
 

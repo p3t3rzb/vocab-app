@@ -41,7 +41,7 @@ def safe_db_basename(src: str, tgt: str) -> str:
 
     Returns the empty string if either side sanitises to nothing — this is
     also a safety check, since path separators and ``..`` cannot survive
-    :func:`slugify` and so the result cannot escape ``storage/``.
+    :func:`slugify` and so the result cannot escape ``storage/databases/``.
     """
     src_c, tgt_c = slugify(src), slugify(tgt)
     if not src_c or not tgt_c:

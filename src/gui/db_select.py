@@ -1,6 +1,6 @@
 """Database-selection screen — the app's home view.
 
-Lists every ``*.db`` file in ``storage/`` along with its language pair, word
+Lists every ``*.db`` file in ``storage/databases/`` along with its language pair, word
 count, and most recent training timestamp. Also hosts the "New database"
 dialog and the navigation entry point to the global settings screen.
 """
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 
 
 class DatabaseSelectScreen(BaseScreen):
-    """Lists every database in ``storage/`` and lets the user open or create one."""
+    """Lists every database in ``storage/databases/`` and lets the user open or create one."""
 
     def __init__(self, master: App) -> None:
         self._db_entries: list[DbEntry] = []
@@ -79,11 +79,11 @@ class DatabaseSelectScreen(BaseScreen):
         ctk.CTkButton(btn_frame, text="Open", width=100, command=self._open_selected).pack(side="left", padx=4)
 
     def _load_databases(self) -> None:
-        """Re-scan ``storage/`` into the backing entry list, then render."""
+        """Re-scan ``storage/databases/`` into the backing entry list, then render."""
         self._db_entries.clear()
 
-        if Paths.STORAGE_DIR.exists():
-            for db_path in sorted(Paths.STORAGE_DIR.glob("*.db")):
+        if Paths.DATABASES_DIR.exists():
+            for db_path in sorted(Paths.DATABASES_DIR.glob("*.db")):
                 pair = read_language_pair(db_path)
                 if pair is None:
                     continue
@@ -218,7 +218,7 @@ class NewDatabaseDialog(BaseDialog):
             )
             return
         filename = f"{base}.db"
-        db_path = Paths.STORAGE_DIR / filename
+        db_path = Paths.DATABASES_DIR / filename
 
         if db_path.exists():
             messagebox.showwarning(
@@ -229,7 +229,7 @@ class NewDatabaseDialog(BaseDialog):
             return
 
         try:
-            Paths.STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+            Paths.DATABASES_DIR.mkdir(parents=True, exist_ok=True)
             init_db(f"sqlite:///{db_path}", src_lang, tgt_lang)
         except Exception as exc:
             messagebox.showerror("Creation failed", str(exc), parent=self)

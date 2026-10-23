@@ -1,7 +1,7 @@
 """Read-only sqlite3 peek helpers for browsing many databases.
 
 The home screen and the settings recalc worker both need to glance at every
-``*.db`` in ``storage/`` without going through the global SQLAlchemy engine
+``*.db`` in ``storage/databases/`` without going through the global SQLAlchemy engine
 (which would have to be swapped per file). These helpers open a short-lived
 raw :mod:`sqlite3` connection, run one query, and return ``None`` / ``0`` on
 any failure so callers can skip unreadable or unrelated files.
